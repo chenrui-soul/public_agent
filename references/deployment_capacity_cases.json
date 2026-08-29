@@ -1,0 +1,224 @@
+{
+  "suite": "v0.28-capacity-governance-knowledge-quality-trends-and-risks",
+  "ground_truth": [
+    {
+      "id": "capacity-three-level-status",
+      "invariants": [
+        "healthy, warning and critical reports use stable exit codes 0, 4 and 5",
+        "threshold boundaries are inclusive and cross-field validated",
+        "capacity output contains safe aggregate facts only"
+      ]
+    },
+    {
+      "id": "capacity-recommendation-bounds",
+      "invariants": [
+        "recommended workers use bounded ceil(workload / target jobs per worker)",
+        "scale delta is advisory and never mutates deployment state",
+        "minimum and maximum worker bounds are always enforced"
+      ]
+    },
+    {
+      "id": "capacity-policy-approval-state-machine",
+      "invariants": [
+        "a calibration recommendation creates a versioned pending-window request against the exact active policy",
+        "window validation and named human approval are mandatory before publication",
+        "expected versions, handler scope and PostgreSQL locks prevent stale or cross-handler transitions"
+      ]
+    },
+    {
+      "id": "capacity-policy-cooldown-review-rollback",
+      "invariants": [
+        "a handler version cannot publish another policy while a prior release is cooling down",
+        "effect review uses bounded persisted observations and insufficient evidence never advances state",
+        "rollback succeeds only while the published policy is active and restores the exact previous policy"
+      ]
+    },
+    {
+      "id": "capacity-policy-runtime-resolution",
+      "invariants": [
+        "capacity checks, monitors and calibrations resolve the active PostgreSQL policy at runtime",
+        "Settings remain the safe fallback when no active policy exists",
+        "policy publication changes thresholds only and never mutates worker replicas or deployment files"
+      ]
+    },
+    {
+      "id": "postgres-handler-isolation",
+      "invariants": [
+        "backlog and heartbeat facts are isolated by job type and handler version",
+        "stopped workers are not classified as stale",
+        "stale and errored workers are counted without exposing error bodies"
+      ]
+    },
+    {
+      "id": "capacity-cli-fail-closed",
+      "invariants": [
+        "invalid configuration exits 2 before database assembly",
+        "runtime and cleanup failures exit 1 with machine codes only",
+        "database URLs, tokens and exception text are not emitted"
+      ]
+    },
+    {
+      "id": "capacity-cli-provider-independent",
+      "invariants": [
+        "capacity-check runs without an OpenAI API key",
+        "the command reads PostgreSQL facts only",
+        "the report is emitted as one JSON document"
+      ]
+    },
+    {
+      "id": "reversible-capacity-governance-schema",
+      "invariants": [
+        "Alembic adds versioned capacity policies and change requests after the v0.20 head",
+        "downgrade removes only v0.21 policy governance objects and returns to the v0.20 head",
+        "upgrade round-trip and schema drift checks are clean"
+      ]
+    },
+    {
+      "id": "non-root-production-image",
+      "invariants": [
+        "the final image runs as uid and gid 10001",
+        "dependencies are installed from an exact constraints lock",
+        "the runtime image contains the CLI and Alembic migrations"
+      ]
+    },
+    {
+      "id": "compose-secret-boundary",
+      "invariants": [
+        "database URL, application secret and OpenAI key are mounted as secrets",
+        "secret values are absent from image layers and Compose environment",
+        "application settings read the mounted secrets directory"
+      ]
+    },
+    {
+      "id": "compose-scalable-worker",
+      "invariants": [
+        "reflection worker id is not fixed in Compose",
+        "workers can be scaled with docker compose --scale",
+        "stop grace period exceeds the configured drain timeout"
+      ]
+    },
+    {
+      "id": "compose-capacity-guardrails",
+      "invariants": [
+        "application services have cpu, memory and pid limits",
+        "container logs have size and file-count rotation",
+        "migrations complete before API, worker or capacity checks start"
+      ]
+    },
+    {
+      "id": "real-history-capacity-calibration",
+      "invariants": [
+        "worker claims and terminal transitions persist bounded processing duration facts",
+        "calibration uses completed production jobs without invoking a model provider",
+        "insufficient samples fail closed and recommendations never change runtime settings"
+      ]
+    },
+    {
+      "id": "persistent-capacity-trends",
+      "invariants": [
+        "capacity observations are idempotently persisted by handler version and timestamp",
+        "trend queries are time-bounded and aggregate by validated hour or day buckets",
+        "the production monitor samples continuously without controlling replicas"
+      ]
+    },
+    {
+      "id": "partitioned-outbox-archive",
+      "invariants": [
+        "terminal job snapshots are copied into native PostgreSQL range partitions",
+        "archive identity includes job id, completion timestamp and source version",
+        "archive batches use bounded row locking and preserve safe payload boundaries"
+      ]
+    },
+    {
+      "id": "guarded-outbox-prune",
+      "invariants": [
+        "maintenance is a dry run unless execute is explicit and prune requires execute",
+        "source rows are deleted only when the current version has an exact archive copy",
+        "jobs referenced by retry history are never physically pruned"
+      ]
+    },
+    {
+      "id": "capacity-rbac-control-plane",
+      "invariants": [
+        "capacity actions revalidate the active tenant, principal, token, all-agents scope and current permission in the state transaction",
+        "the authenticated principal subject is the only accepted operator identity",
+        "revoked, scoped or unauthorized principals cannot advance request or alert versions"
+      ]
+    },
+    {
+      "id": "policy-drift-alert-loop",
+      "invariants": [
+        "bounded observation snapshots are compared with the active policy or Settings fallback using canonical fingerprints",
+        "repeated scans deduplicate alerts while new evidence can escalate, resolve or reopen them",
+        "acknowledgement never masquerades as recovery and no-new-observation scans cannot close alerts"
+      ]
+    },
+    {
+      "id": "capacity-approval-console-security",
+      "invariants": [
+        "the console shell contains no governance data and stores bearer material in sessionStorage only",
+        "all governance facts and actions flow through authenticated JSON APIs",
+        "CSP, no-store, safe DOM APIs, permission errors, conflicts and dangerous-action confirmation are present"
+      ]
+    },
+    {
+      "id": "capacity-audit-sla-drill",
+      "invariants": [
+        "audit readers have an independent least-privilege permission and each query revalidates current PostgreSQL identity facts",
+        "bounded audit cursors bind actor, handler and every filter while safe projections exclude token identifiers and unknown metadata",
+        "alert SLA state is derived from persisted lifecycle timestamps and the read-only drill fails closed when triggers, constraints or indexes are missing"
+      ]
+    },
+    {
+      "id": "capacity-governance-incident-loop",
+      "invariants": [
+        "bounded audit buckets, breached alert SLA, repeated alert reopen and failed drill checks produce versioned internal PostgreSQL incidents",
+        "stable rule fingerprints deduplicate repeated scans while new evidence can escalate, resolve or reopen an incident",
+        "incident read and manage permissions are independent, acknowledgement is not recovery, cursors bind actor and filters, and responses exclude token identifiers and raw exception text"
+      ]
+    },
+    {
+      "id": "capacity-governance-remediation-loop",
+      "invariants": [
+        "each incident recurrence cycle accepts at most one remediation and its playbook is fixed by the incident signal",
+        "request, approval, execution recording and recovery verification use independent permissions with requester-approver and executor-verifier separation",
+        "execution stores only bounded result and evidence codes, while verification requires a newer resolved incident fact and never performs an automatic production change"
+      ]
+    },
+    {
+      "id": "capacity-governance-postmortem-knowledge-loop",
+      "invariants": [
+        "only a verified remediation can create one source-version-bound postmortem with playbook-compatible classifications and a safe bounded summary",
+        "postmortem request and review use independent permissions, self-review and source drift fail closed, and approval publishes knowledge atomically",
+        "published governance knowledge is retrievable only through the fixed namespace, domain and advisory access tag with full provenance and explicit non-authorization metadata"
+      ]
+    },
+    {
+      "id": "capacity-governance-knowledge-feedback-isolation-loop",
+      "invariants": [
+        "feedback binds the current published postmortem version, knowledge version and content fingerprint while storing only bounded signal and reason classifications",
+        "feedback reporting and review use independent permissions, self-review and duplicate reporting fail closed, and current identity facts are revalidated in PostgreSQL",
+        "confirming a safety concern atomically confirms feedback and quarantines the postmortem so the governance KnowledgeRetriever immediately excludes it without deleting lineage or content",
+        "the read-only governance drill verifies feedback classification, lifecycle, uniqueness and bounded-query database controls without writing business facts"
+      ]
+    },
+    {
+      "id": "capacity-governance-knowledge-quality-recovery-loop",
+      "invariants": [
+        "quality snapshots bind the exact postmortem and knowledge version plus an independent feedback-evidence fingerprint, derive only insufficient, healthy, degraded or unsafe, and reject updates",
+        "quarantined knowledge is retained for at least 24 hours and recovery requests accept only the structured false_positive reason against the current unsafe snapshot",
+        "requester, reviewer, original safety reporter and safety confirmer remain separated, while duplicate active requests, stale snapshots and old expected versions fail closed",
+        "approval, a new knowledge version, postmortem restore history and success audit commit atomically, and RAG resumes only the current published version without deleting prior feedback, snapshots or lineage"
+      ]
+    },
+    {
+      "id": "capacity-governance-knowledge-quality-trend-risk-loop",
+      "invariants": [
+        "quality trends aggregate immutable snapshots in bounded UTC hour or day buckets, zero-fill only within the configured maximum and bind cursors to actor scope plus every filter",
+        "persistent unsafe, repeated degraded and post-restoration requarantine risks reuse the PostgreSQL incident lifecycle with stable rule fingerprints and independent evidence fingerprints",
+        "truncated snapshot or postmortem reads fail closed, acknowledgement and elapsed time are not recovery, and only newer quality or quarantine facts can resolve or reopen risk incidents",
+        "fixed playbooks and bounded evidence codes remain advisory-only and never generate snapshots, restore knowledge, send notifications or execute production changes"
+      ]
+    }
+  ]
+}

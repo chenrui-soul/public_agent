@@ -1,0 +1,68 @@
+{
+  "suite": "v0.18-reflection-job-safe-operations",
+  "ground_truth": [
+    {
+      "id": "tenant-agent-handler-isolation",
+      "expected_status": "scoped",
+      "invariants": [
+        "stats, list, and detail are constrained by the current tenant",
+        "explicit grants cannot observe another agent",
+        "list filters do not mix handler versions"
+      ]
+    },
+    {
+      "id": "strict-filter-bound-keyset",
+      "expected_status": "stable_or_rejected",
+      "invariants": [
+        "the cursor is canonical unpadded URL-safe Base64",
+        "the cursor contains exactly the supported versioned fields",
+        "a cursor cannot be replayed with different status, agent, handler, or grant scope"
+      ]
+    },
+    {
+      "id": "safe-job-projection",
+      "expected_status": "redacted",
+      "invariants": [
+        "responses contain only identifiers, states, counters, safe timestamps, version, and machine error code",
+        "task, output, trace, payload, result metadata, worker id, lease token, checkpoint, and provider state are absent",
+        "errors do not include exception bodies, tokens, or authorization headers"
+      ]
+    },
+    {
+      "id": "current-actor-fact-revalidation",
+      "expected_status": "forbidden",
+      "invariants": [
+        "retry rechecks active tenant and principal inside its transaction",
+        "retry rechecks token revocation and expiry inside its transaction",
+        "retry uses current permissions and agent grants instead of the bearer snapshot"
+      ]
+    },
+    {
+      "id": "dead-letter-versioned-retry",
+      "expected_status": "pending",
+      "invariants": [
+        "only dead_letter can transition to pending",
+        "the expected version is checked under a row lock",
+        "historical total attempts remain while attempts_in_cycle and lease fields reset"
+      ]
+    },
+    {
+      "id": "concurrent-idempotent-retry",
+      "expected_status": "one_transition",
+      "invariants": [
+        "the same request produces one transition and an idempotent replay",
+        "different keys or a changed request conflict",
+        "an old lease token cannot complete or fail after manual retry"
+      ]
+    },
+    {
+      "id": "append-only-safe-operations-audit",
+      "expected_status": "audited",
+      "invariants": [
+        "each retry attempt records actor, target identifiers, action, outcome, states, versions, machine code, and an idempotency hash",
+        "raw idempotency values, job payloads, run bodies, exception bodies, and credentials are absent",
+        "database updates to retry request and audit rows are rejected"
+      ]
+    }
+  ]
+}

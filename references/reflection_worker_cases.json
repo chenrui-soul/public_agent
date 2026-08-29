@@ -1,0 +1,122 @@
+{
+  "suite": "v0.18-production-reflection-worker",
+  "ground_truth": [
+    {
+      "id": "terminal-transactional-enqueue",
+      "expected_status": "pending",
+      "invariants": [
+        "terminal run state and reflection job commit in one transaction",
+        "run plus handler version is idempotent",
+        "payload contains schema version only and no trace or credential material"
+      ]
+    },
+    {
+      "id": "tenant-run-scope-fk",
+      "expected_status": "rejected",
+      "invariants": [
+        "an outbox job tenant must match the referenced run tenant",
+        "the invariant is enforced by a PostgreSQL composite foreign key",
+        "a valid tenant id paired with another tenant's run id is rejected"
+      ]
+    },
+    {
+      "id": "worker-registration-fencing",
+      "expected_status": "stopped",
+      "invariants": [
+        "re-registering the same worker id replaces its instance token",
+        "the old process cannot update the new worker heartbeat",
+        "worker lifecycle state and processed count remain in PostgreSQL"
+      ]
+    },
+    {
+      "id": "backlog-snapshot",
+      "expected_status": "observable",
+      "invariants": [
+        "pending and processing counts come from PostgreSQL job facts",
+        "the oldest available task timestamp is reported",
+        "handler versions are observed independently"
+      ]
+    },
+    {
+      "id": "runner-graceful-stop",
+      "expected_status": "stopped",
+      "invariants": [
+        "a stop signal prevents the runner from claiming another job",
+        "the current job may finish within the drain boundary",
+        "the final worker lifecycle state is persisted"
+      ]
+    },
+    {
+      "id": "skip-locked-lease-claim",
+      "expected_status": "processing",
+      "invariants": [
+        "concurrent workers claim one job once",
+        "heartbeats extend a valid finite lease",
+        "expired leases can be reclaimed with a new fencing token"
+      ]
+    },
+    {
+      "id": "stale-worker-fencing",
+      "expected_status": "lease_lost",
+      "invariants": [
+        "an old lease token cannot complete a reclaimed job",
+        "an old lease token cannot fail a reclaimed job",
+        "only the current owner writes the job terminal state"
+      ]
+    },
+    {
+      "id": "bounded-retry-dead-letter",
+      "expected_status": "dead_letter",
+      "invariants": [
+        "failures use bounded exponential backoff",
+        "attempts never exceed max attempts",
+        "the final failure persists a safe machine code only"
+      ]
+    },
+    {
+      "id": "idempotent-candidate-replay",
+      "expected_status": "succeeded",
+      "invariants": [
+        "the worker reloads the committed terminal trace by run id",
+        "handler version replay does not duplicate a candidate fingerprint",
+        "completion appends candidate ids without raw candidate content"
+      ]
+    },
+    {
+      "id": "worker-error-redaction",
+      "expected_status": "dead_letter",
+      "invariants": [
+        "provider or extractor exception text is not persisted",
+        "token and authorization header text are absent from job and run events",
+        "the external result contains only a safe exception type code"
+      ]
+    },
+    {
+      "id": "cli-production-assembly",
+      "expected_status": "stopped",
+      "invariants": [
+        "the CLI assembles Database, OpenAI ReflectionEngine, PostgreSQL learning stores, ReflectionWorker and runner",
+        "the API key comes from Settings only and is not accepted as a process argument",
+        "owned provider and database resources are closed exactly once"
+      ]
+    },
+    {
+      "id": "cli-signal-stop",
+      "expected_status": "stopped",
+      "invariants": [
+        "SIGINT and SIGTERM set one asyncio stop event without mutating job state directly",
+        "Windows SIGBREAK is supported when available",
+        "previous process signal handlers are restored after shutdown"
+      ]
+    },
+    {
+      "id": "cli-configuration-fail-closed",
+      "expected_status": "rejected",
+      "invariants": [
+        "a missing OpenAI API key or invalid worker boundary exits before polling",
+        "configuration and runtime failures emit stable JSON machine codes",
+        "database URLs, tokens, provider exception text and run traces are never emitted"
+      ]
+    }
+  ]
+}

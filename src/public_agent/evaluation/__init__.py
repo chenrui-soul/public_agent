@@ -1,0 +1,41 @@
+"""Versioned RAG datasets, deterministic metrics, and quality gates."""
+
+from public_agent.evaluation.rag import (
+    RAGAggregateMetrics,
+    RAGAnswerProvider,
+    RAGCaseResult,
+    RAGCitationMetrics,
+    RAGEvaluatedHit,
+    RAGEvaluationCase,
+    RAGEvaluationDataset,
+    RAGEvaluationReport,
+    RAGEvaluationStore,
+    RAGEvaluator,
+    RAGGateCheck,
+    RAGQualityGate,
+    RAGQualityThresholds,
+    RAGRegressionPolicy,
+    RAGRetrievalMetrics,
+    compute_citation_metrics,
+    compute_retrieval_metrics,
+)
+
+__all__ = [
+    "RAGAggregateMetrics",
+    "RAGAnswerProvider",
+    "RAGCaseResult",
+    "RAGCitationMetrics",
+    "RAGEvaluatedHit",
+    "RAGEvaluationCase",
+    "RAGEvaluationDataset",
+    "RAGEvaluationReport",
+    "RAGEvaluationStore",
+    "RAGEvaluator",
+    "RAGGateCheck",
+    "RAGQualityGate",
+    "RAGQualityThresholds",
+    "RAGRegressionPolicy",
+    "RAGRetrievalMetrics",
+    "compute_citation_metrics",
+    "compute_retrieval_metrics",
+]

@@ -1,0 +1,265 @@
+name: public-agent-production
+
+x-app-environment: &app-environment
+  PUBLIC_AGENT_ENVIRONMENT: production
+  PUBLIC_AGENT_SECRETS_DIR: /run/secrets
+  PUBLIC_AGENT_REDIS_URL: redis://redis:6379/0
+  PUBLIC_AGENT_LOG_LEVEL: ${PUBLIC_AGENT_LOG_LEVEL:-INFO}
+  PUBLIC_AGENT_REFLECTION_HANDLER_VERSION: ${PUBLIC_AGENT_REFLECTION_HANDLER_VERSION:-reflection-v1}
+  PUBLIC_AGENT_REFLECTION_WORKER_MAX_ATTEMPTS: ${PUBLIC_AGENT_REFLECTION_WORKER_MAX_ATTEMPTS:-5}
+  PUBLIC_AGENT_REFLECTION_WORKER_RETRY_BASE_SECONDS: ${PUBLIC_AGENT_REFLECTION_WORKER_RETRY_BASE_SECONDS:-30}
+  PUBLIC_AGENT_REFLECTION_WORKER_RETRY_MAX_SECONDS: ${PUBLIC_AGENT_REFLECTION_WORKER_RETRY_MAX_SECONDS:-3600}
+  PUBLIC_AGENT_REFLECTION_WORKER_LEASE_SECONDS: ${PUBLIC_AGENT_REFLECTION_WORKER_LEASE_SECONDS:-300}
+  PUBLIC_AGENT_REFLECTION_WORKER_HEARTBEAT_SECONDS: ${PUBLIC_AGENT_REFLECTION_WORKER_HEARTBEAT_SECONDS:-60}
+  PUBLIC_AGENT_REFLECTION_WORKER_POLL_INTERVAL_SECONDS: ${PUBLIC_AGENT_REFLECTION_WORKER_POLL_INTERVAL_SECONDS:-1}
+  PUBLIC_AGENT_REFLECTION_WORKER_POLL_JITTER_SECONDS: ${PUBLIC_AGENT_REFLECTION_WORKER_POLL_JITTER_SECONDS:-0.25}
+  PUBLIC_AGENT_REFLECTION_WORKER_DRAIN_TIMEOUT_SECONDS: ${PUBLIC_AGENT_REFLECTION_WORKER_DRAIN_TIMEOUT_SECONDS:-30}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_STALE_AFTER_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_STALE_AFTER_SECONDS:-180}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_SAMPLE_INTERVAL_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_SAMPLE_INTERVAL_SECONDS:-60}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_MINIMUM_WORKERS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_MINIMUM_WORKERS:-1}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_MAXIMUM_WORKERS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_MAXIMUM_WORKERS:-32}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_TARGET_JOBS_PER_WORKER: ${PUBLIC_AGENT_REFLECTION_CAPACITY_TARGET_JOBS_PER_WORKER:-20}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_READY_WARNING: ${PUBLIC_AGENT_REFLECTION_CAPACITY_READY_WARNING:-100}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_READY_CRITICAL: ${PUBLIC_AGENT_REFLECTION_CAPACITY_READY_CRITICAL:-500}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_OLDEST_WARNING_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_OLDEST_WARNING_SECONDS:-300}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_OLDEST_CRITICAL_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_OLDEST_CRITICAL_SECONDS:-1800}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_DEAD_LETTER_WARNING: ${PUBLIC_AGENT_REFLECTION_CAPACITY_DEAD_LETTER_WARNING:-1}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_DEAD_LETTER_CRITICAL: ${PUBLIC_AGENT_REFLECTION_CAPACITY_DEAD_LETTER_CRITICAL:-10}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_GOVERNANCE_TENANT_ID: ${PUBLIC_AGENT_REFLECTION_CAPACITY_GOVERNANCE_TENANT_ID:-default}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_DRIFT_WINDOW_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_DRIFT_WINDOW_SECONDS:-900}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_DRIFT_MINIMUM_OBSERVATIONS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_DRIFT_MINIMUM_OBSERVATIONS:-3}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_DRIFT_CRITICAL_OBSERVATIONS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_DRIFT_CRITICAL_OBSERVATIONS:-10}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_DRIFT_MAXIMUM_OBSERVATIONS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_DRIFT_MAXIMUM_OBSERVATIONS:-10000}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_ALERT_RESPONSE_WARNING_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_ALERT_RESPONSE_WARNING_SECONDS:-900}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_ALERT_RESPONSE_CRITICAL_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_ALERT_RESPONSE_CRITICAL_SECONDS:-3600}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_AUDIT_WINDOW_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_AUDIT_WINDOW_SECONDS:-300}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_AUDIT_WARNING_COUNT: ${PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_AUDIT_WARNING_COUNT:-5}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_AUDIT_CRITICAL_COUNT: ${PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_AUDIT_CRITICAL_COUNT:-10}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_AUDIT_MAXIMUM_EVENTS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_AUDIT_MAXIMUM_EVENTS:-1000}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_REOPEN_WARNING_COUNT: ${PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_REOPEN_WARNING_COUNT:-2}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_REOPEN_CRITICAL_COUNT: ${PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_REOPEN_CRITICAL_COUNT:-4}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_MAXIMUM_ALERTS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_MAXIMUM_ALERTS:-1000}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_MAXIMUM_INCIDENTS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_INCIDENT_MAXIMUM_INCIDENTS:-1000}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_QUALITY_RISK_WINDOW_SECONDS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_QUALITY_RISK_WINDOW_SECONDS:-604800}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_UNSAFE_WARNING_COUNT: ${PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_UNSAFE_WARNING_COUNT:-2}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_UNSAFE_CRITICAL_COUNT: ${PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_UNSAFE_CRITICAL_COUNT:-3}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_DEGRADED_WARNING_COUNT: ${PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_DEGRADED_WARNING_COUNT:-2}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_DEGRADED_CRITICAL_COUNT: ${PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_DEGRADED_CRITICAL_COUNT:-4}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_QUALITY_MAXIMUM_SNAPSHOTS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_QUALITY_MAXIMUM_SNAPSHOTS:-1000}
+  PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_QUALITY_MAXIMUM_TREND_BUCKETS: ${PUBLIC_AGENT_REFLECTION_CAPACITY_KNOWLEDGE_QUALITY_MAXIMUM_TREND_BUCKETS:-366}
+  PUBLIC_AGENT_OPENAI_MODEL: ${PUBLIC_AGENT_OPENAI_MODEL:-gpt-5.6-terra}
+  PUBLIC_AGENT_OPENAI_MAX_OUTPUT_TOKENS: ${PUBLIC_AGENT_OPENAI_MAX_OUTPUT_TOKENS:-4096}
+  PUBLIC_AGENT_OPENAI_TIMEOUT_SECONDS: ${PUBLIC_AGENT_OPENAI_TIMEOUT_SECONDS:-60}
+  PUBLIC_AGENT_OPENAI_MAX_RETRIES: ${PUBLIC_AGENT_OPENAI_MAX_RETRIES:-2}
+  PUBLIC_AGENT_OPENAI_RETRY_BACKOFF_SECONDS: ${PUBLIC_AGENT_OPENAI_RETRY_BACKOFF_SECONDS:-0.25}
+
+x-core-secrets: &core-secrets
+  - PUBLIC_AGENT_DATABASE_URL
+  - PUBLIC_AGENT_SECRET_KEY
+
+x-api-secrets: &api-secrets
+  - PUBLIC_AGENT_DATABASE_URL
+  - PUBLIC_AGENT_SECRET_KEY
+  - PUBLIC_AGENT_API_TOKEN_PEPPER
+
+x-worker-secrets: &worker-secrets
+  - PUBLIC_AGENT_DATABASE_URL
+  - PUBLIC_AGENT_SECRET_KEY
+  - PUBLIC_AGENT_OPENAI_API_KEY
+
+x-json-logging: &json-logging
+  driver: json-file
+  options:
+    max-size: ${PUBLIC_AGENT_LOG_MAX_SIZE:-10m}
+    max-file: ${PUBLIC_AGENT_LOG_MAX_FILES:-5}
+
+x-app-service: &app-service
+  image: ${PUBLIC_AGENT_IMAGE:-public-agent:production}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      PYTHON_IMAGE: ${PUBLIC_AGENT_PYTHON_IMAGE:-python:3.12-slim-bookworm}
+  environment: *app-environment
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  mem_limit: ${PUBLIC_AGENT_APP_MEMORY_LIMIT:-1g}
+  cpus: ${PUBLIC_AGENT_APP_CPU_LIMIT:-1.0}
+  logging: *json-logging
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${PUBLIC_AGENT_POSTGRES_DB:-public_agent}
+      POSTGRES_USER: ${PUBLIC_AGENT_POSTGRES_USER:-public_agent}
+      POSTGRES_PASSWORD_FILE: /run/secrets/PUBLIC_AGENT_POSTGRES_PASSWORD
+    secrets:
+      - PUBLIC_AGENT_POSTGRES_PASSWORD
+    volumes:
+      - public_agent_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 60s
+    mem_limit: ${PUBLIC_AGENT_POSTGRES_MEMORY_LIMIT:-2g}
+    cpus: ${PUBLIC_AGENT_POSTGRES_CPU_LIMIT:-2.0}
+    pids_limit: 256
+    logging: *json-logging
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - ${PUBLIC_AGENT_REDIS_MAXMEMORY:-384mb}
+      - --maxmemory-policy
+      - allkeys-lru
+    volumes:
+      - public_agent_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    stop_grace_period: 30s
+    mem_limit: ${PUBLIC_AGENT_REDIS_MEMORY_LIMIT:-512m}
+    cpus: ${PUBLIC_AGENT_REDIS_CPU_LIMIT:-0.5}
+    pids_limit: 128
+    logging: *json-logging
+    restart: unless-stopped
+
+  migrate:
+    <<: *app-service
+    command: ["alembic", "upgrade", "head"]
+    secrets: *core-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app-service
+    command: ["public-agent", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    secrets: *api-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    ports:
+      - ${PUBLIC_AGENT_API_BIND_ADDRESS:-127.0.0.1}:${PUBLIC_AGENT_API_HOST_PORT:-8000}:8000
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  reflection-worker:
+    <<: *app-service
+    command: ["public-agent", "reflection-worker"]
+    secrets: *worker-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 45s
+    restart: unless-stopped
+
+  capacity-check:
+    <<: *app-service
+    profiles: ["ops"]
+    command: ["public-agent", "capacity-check", "--pretty"]
+    secrets: *core-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  capacity-monitor:
+    <<: *app-service
+    command: ["public-agent", "capacity-monitor"]
+    secrets: *core-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: ${PUBLIC_AGENT_CAPACITY_MONITOR_MEMORY_LIMIT:-256m}
+    cpus: ${PUBLIC_AGENT_CAPACITY_MONITOR_CPU_LIMIT:-0.25}
+    restart: unless-stopped
+
+  capacity-trend:
+    <<: *app-service
+    profiles: ["ops"]
+    command: ["public-agent", "capacity-trend", "--pretty"]
+    secrets: *core-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  capacity-calibrate:
+    <<: *app-service
+    profiles: ["ops"]
+    command: ["public-agent", "capacity-calibrate", "--pretty"]
+    secrets: *core-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  capacity-policy:
+    <<: *app-service
+    profiles: ["ops"]
+    command: ["public-agent", "capacity-policy", "show", "--pretty"]
+    secrets: *core-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  outbox-maintain:
+    <<: *app-service
+    profiles: ["ops"]
+    command: ["public-agent", "outbox-maintain", "--pretty"]
+    secrets: *core-secrets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+volumes:
+  public_agent_postgres:
+  public_agent_redis:
+
+secrets:
+  PUBLIC_AGENT_POSTGRES_PASSWORD:
+    file: ${PUBLIC_AGENT_POSTGRES_PASSWORD_FILE:-./secrets/PUBLIC_AGENT_POSTGRES_PASSWORD}
+  PUBLIC_AGENT_DATABASE_URL:
+    file: ${PUBLIC_AGENT_DATABASE_URL_FILE:-./secrets/PUBLIC_AGENT_DATABASE_URL}
+  PUBLIC_AGENT_SECRET_KEY:
+    file: ${PUBLIC_AGENT_SECRET_KEY_FILE:-./secrets/PUBLIC_AGENT_SECRET_KEY}
+  PUBLIC_AGENT_API_TOKEN_PEPPER:
+    file: ${PUBLIC_AGENT_API_TOKEN_PEPPER_FILE:-./secrets/PUBLIC_AGENT_API_TOKEN_PEPPER}
+  PUBLIC_AGENT_OPENAI_API_KEY:
+    file: ${PUBLIC_AGENT_OPENAI_API_KEY_FILE:-./secrets/PUBLIC_AGENT_OPENAI_API_KEY}

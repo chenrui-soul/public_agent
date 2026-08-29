@@ -1,0 +1,59 @@
+{
+  "suite": "v0.16-principal-token-management-audit",
+  "ground_truth": [
+    {
+      "id": "delegation-without-self-elevation",
+      "expected_status": "forbidden_or_created",
+      "invariants": [
+        "an actor can grant only permissions it currently holds",
+        "every granted permission must be present in the server allowlist",
+        "an actor cannot create a principal with a broader agent scope"
+      ]
+    },
+    {
+      "id": "separated-management-permissions",
+      "expected_status": "least_privilege",
+      "invariants": [
+        "principal read and write permissions are independent",
+        "token read, issue, and revoke permissions are independent",
+        "cross-tenant identifiers are hidden as not found"
+      ]
+    },
+    {
+      "id": "one-time-token-projection",
+      "expected_status": "redacted",
+      "invariants": [
+        "the complete token is returned only by the issue response",
+        "token lists contain id, prefix, label, timestamps, and no digest or secret",
+        "audit responses contain no token, digest, or authorization header"
+      ]
+    },
+    {
+      "id": "immediate-idempotent-lifecycle",
+      "expected_status": "revoked_or_disabled",
+      "invariants": [
+        "repeated revocation is idempotent",
+        "revoked tokens fail their next authentication",
+        "disabled principals fail their next authentication"
+      ]
+    },
+    {
+      "id": "concurrent-last-admin-guard",
+      "expected_status": "one_active_admin",
+      "invariants": [
+        "tenant-scoped locking serializes security administrator removal",
+        "concurrent self-disable attempts leave one usable administrator",
+        "the final usable critical token cannot be revoked"
+      ]
+    },
+    {
+      "id": "append-only-authentication-audit",
+      "expected_status": "audited",
+      "invariants": [
+        "successful and denied presented-token authentication attempts are appended",
+        "successful and rejected lifecycle mutations are appended",
+        "database updates to audit rows are rejected"
+      ]
+    }
+  ]
+}

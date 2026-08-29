@@ -1,0 +1,15 @@
+id: calculator_assistant
+name: Calculator Assistant
+version: 0.1.0
+description: Minimal domain package used to verify the agent runtime.
+instructions_file: instructions.md
+memory_namespace: calculator_assistant
+allowed_tools:
+  - add_numbers
+max_steps: 4
+policies:
+  require_citations: false
+  high_risk_requires_human_review: true
+  prohibited_actions: []
+evaluation_suite: calculator_v1
+

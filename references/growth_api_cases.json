@@ -1,0 +1,50 @@
+{
+  "suite": "v0.15-memory-growth-management-api",
+  "ground_truth": [
+    {
+      "id": "side-effect-free-memory-keyset",
+      "expected_status": "stable",
+      "invariants": [
+        "created_at plus id keysets return every scoped memory exactly once",
+        "management search does not increment recall_count",
+        "malformed cursors fail closed"
+      ]
+    },
+    {
+      "id": "trusted-candidate-evaluation",
+      "expected_status": "awaiting_approval_or_rejected",
+      "invariants": [
+        "clients cannot submit passed=true",
+        "only the configured evaluator produces evaluation evidence",
+        "identical evaluation retries create one evaluation row"
+      ]
+    },
+    {
+      "id": "atomic-human-decision",
+      "expected_status": "active_or_rejected",
+      "invariants": [
+        "publication requires a passing evaluation and an authenticated reviewer",
+        "concurrent identical approvals publish one memory and one approval",
+        "a changed replay conflicts"
+      ]
+    },
+    {
+      "id": "idempotent-rollback",
+      "expected_status": "rolled_back",
+      "invariants": [
+        "rollback deactivates the published memory",
+        "identical rollback retries are idempotent",
+        "candidate and memory remain transactionally consistent"
+      ]
+    },
+    {
+      "id": "safe-bearer-projection",
+      "expected_status": "redacted",
+      "invariants": [
+        "tenant headers cannot override the Bearer principal",
+        "cross-tenant candidate ids return not found",
+        "reflection prompts, provider state, checkpoints, and raw event bodies are absent"
+      ]
+    }
+  ]
+}

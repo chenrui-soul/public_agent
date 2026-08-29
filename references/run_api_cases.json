@@ -1,0 +1,42 @@
+{
+  "suite": "v0.14-run-approval-api",
+  "ground_truth": [
+    {
+      "id": "active-package-run",
+      "expected_status": "succeeded",
+      "invariants": [
+        "authenticated tenant overrides client headers",
+        "active agent key is used instead of domain id",
+        "same idempotency request replays one run"
+      ]
+    },
+    {
+      "id": "approval-exact-resume",
+      "expected_status": "succeeded",
+      "invariants": [
+        "approved tool executes exactly once",
+        "repeated identical decision is idempotent",
+        "different decision conflicts"
+      ]
+    },
+    {
+      "id": "rejection-and-cancel",
+      "expected_status": "canceled",
+      "invariants": [
+        "rejected tool never executes",
+        "cancel clears checkpoint ownership",
+        "stale resume owner cannot finish"
+      ]
+    },
+    {
+      "id": "safe-response",
+      "expected_status": "redacted",
+      "invariants": [
+        "checkpoint is absent",
+        "provider state is absent",
+        "resume token and tool arguments are absent",
+        "raw internal errors are absent"
+      ]
+    }
+  ]
+}

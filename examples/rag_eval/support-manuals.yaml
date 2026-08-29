@@ -1,0 +1,32 @@
+name: support-manuals-rag
+version: "2026-08-25"
+tenant_id: tenant-a
+agent_id: support-agent
+domain_id: support-agent
+namespace: support-manuals
+top_k: 3
+metadata:
+  owner: support
+  language: zh-CN
+cases:
+  - id: refund-window
+    query: 商品签收后多少天内可以申请退款？
+    relevant_source_keys:
+      - refund-policy
+    tags:
+      - refund
+      - policy
+    difficulty: easy
+    metadata:
+      intent: refund_policy
+  - id: express-shipping
+    query: 加急配送通常需要几个工作日？
+    relevant_source_keys:
+      - shipping-policy
+    access_tags:
+      - customer-support
+    tags:
+      - shipping
+    difficulty: medium
+    metadata:
+      intent: shipping_speed
