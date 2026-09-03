@@ -746,6 +746,13 @@ Shell/SQL/编排命令。批准时系统会再次重验 incident/remediation 版
 `GET /postmortems`、`GET /postmortems/{id}`、`POST /remediations/{id}/postmortems` 以及
 `POST /postmortems/{id}/approve|reject`。
 
+Wave 4 增加知识再认证与退役闭环：`capacity-monitor` 的每次采样都会输出只读
+`knowledge_lifecycle` 聚合（`current/due/overdue/quarantined/retired`）。到期仅生成运营信号，
+不会自动认证、隔离、退役或通知；再认证申请绑定精确的 postmortem/quality 版本并使用独立 RBAC、幂等键和
+事务重验。人工退役保留内容、向量、反馈、质量快照与谱系，但 RAG 永久排除 `retired` 和 `quarantined`。
+生产门禁当前要求 Alembic head `f1b3c7d9e2a4`，并验证 upgrade → downgrade → upgrade 往返、再认证约束/索引
+以及 Docker/Compose 契约。
+
 已发布治理知识支持受限质量反馈。独立
 `operations.capacity_knowledge_feedback:read/report/review` 权限分别控制队列读取、报告和复核；反馈只保存
 `helpful/not_helpful/safety_concern` 信号、受限原因、postmortem version、knowledge version 和内容指纹，

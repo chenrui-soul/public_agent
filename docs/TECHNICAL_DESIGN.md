@@ -830,7 +830,9 @@ v0.19 已新增 PostgreSQL 容量快照、三级判级、有界 Worker 建议、
 重验、事务内知识发布，以及固定 namespace/domain/access tag 的中文全文 + pgvector 混合治理知识检索。v0.27
 已增加受限质量反馈、独立复核、原子隔离、不可变质量快照、24 小时保留、四方职责分离恢复和新知识版本重入。
 v0.28 已增加 UTC 有界质量趋势、captured-time 索引、持续 unsafe、重复 degraded、恢复后再次隔离三类风险、稳定
-rule/evidence fingerprint、truncated 失败关闭、七类事件/Playbook 扩展和独立控制台趋势面板。后续根据生产证据
+rule/evidence fingerprint、truncated 失败关闭、七类事件/Playbook 扩展和独立控制台趋势面板。v0.29 Wave 4
+增加再认证事实、退役审计字段、只读生命周期 monitor 聚合、治理演练约束/索引检查，以及 upgrade → downgrade →
+upgrade 生产迁移门禁；retired 知识保留历史但从 RAG 排除。后续根据生产证据
 评估 OIDC/SSO、外部通知、跨主机配置传播、长期分区维护和外部控制器。
 
 ## 17. 已知风险

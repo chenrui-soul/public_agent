@@ -219,6 +219,30 @@
         "truncated snapshot or postmortem reads fail closed, acknowledgement and elapsed time are not recovery, and only newer quality or quarantine facts can resolve or reopen risk incidents",
         "fixed playbooks and bounded evidence codes remain advisory-only and never generate snapshots, restore knowledge, send notifications or execute production changes"
       ]
+    },
+    {
+      "id": "capacity-governance-knowledge-recertification-loop",
+      "invariants": [
+        "published governance knowledge derives current, due and overdue lifecycle states from a bounded UTC policy window",
+        "monitoring is read-only and recertification requests remain explicit, idempotent and subject to independent human review",
+        "recertification facts are linked to exact postmortem and quality evidence versions"
+      ]
+    },
+    {
+      "id": "capacity-governance-retired-rag-exclusion",
+      "invariants": [
+        "retired postmortems retain content, vectors, feedback and lineage for audit",
+        "retired and quarantined knowledge are excluded from the governance KnowledgeRetriever",
+        "retirement requires the dedicated permission and atomic PostgreSQL state transition"
+      ]
+    },
+    {
+      "id": "capacity-governance-wave4-migration-roundtrip",
+      "invariants": [
+        "Alembic upgrade reaches f1b3c7d9e2a4 and downgrade returns to e9a2f4c6b810",
+        "the recertification table, retired columns, constraints and indexes are present after upgrade",
+        "the production gate validates the current migration head and static deployment contract"
+      ]
     }
   ]
 }

@@ -51,7 +51,7 @@ alembic current
 alembic check
 ```
 
-本版本 head 为 `e9a2f4c6b810`。
+本版本 head 为 `f1b3c7d9e2a4`（父版本 `e9a2f4c6b810`）。Wave 4 新增再认证事实表、退役审计字段及其约束/索引。
 
 ## 4. 首次启动
 
@@ -285,7 +285,8 @@ Authorization: Bearer <auditor-token>
 `remediation_lifecycle_constraints`、`remediation_query_indexes`、`postmortem_lifecycle_constraints`、
 `postmortem_query_indexes`、`knowledge_feedback_lifecycle_constraints`、`knowledge_feedback_query_indexes`、
 `knowledge_quality_snapshot_controls`、`knowledge_quality_query_indexes`、
-`knowledge_recovery_lifecycle_constraints` 和 `knowledge_recovery_query_indexes`。质量项必须证明快照 UPDATE 拒绝、
+`knowledge_recovery_lifecycle_constraints`、`knowledge_recovery_query_indexes`、
+`knowledge_recertification_lifecycle_constraints` 和 `knowledge_recertification_query_indexes`。质量项必须证明快照 UPDATE 拒绝、
 assessment/count/version/evidence 约束和 `(tenant_id, handler_version, captured_at, id)` 趋势索引存在；恢复项必须
 证明单活动申请、生命周期/version CHECK 和状态/postmortem 查询索引存在。失败时先停止治理发布并核对迁移 head；不要通过手工建索引、
 停用 trigger 或跳过 CHECK 来伪造通过。该演练只读，不创建临时 Principal/Token，也不修改请求、告警或审计行。
@@ -299,6 +300,12 @@ assessment/count/version/evidence 约束和 `(tenant_id, handler_version, captur
 5. 风险窗口内持续出现独立 `unsafe` 质量证据，且最新快照仍为 unsafe；
 6. 风险窗口内重复出现独立 `degraded` 质量证据，且最新快照仍为 degraded；
 7. 已恢复过的 postmortem 再次进入 `quarantined`，且新隔离时间晚于最近恢复时间。
+
+capacity-monitor 同时执行只读知识生命周期扫描，并在采样 JSON 的 `knowledge_lifecycle` 字段输出
+`current/due/overdue/quarantined/retired` 聚合。到期只代表需要人工发起再认证，不会自动认证、隔离、退役、
+发送通知或改变 RAG；`retired` 保留完整内容、向量、反馈和谱系，但 KnowledgeRetriever 永久排除该状态。
+再认证请求必须绑定当前 postmortem 版本和质量证据指纹，request/review/retirement 使用独立权限，重复请求由
+幂等键收敛。生产排障时先查看生命周期聚合，再到再认证队列确认 awaiting_review；不得通过修改时间戳或直接改表绕过审批。
 
 `acknowledged` 只表示 incident operator 已接手，禁止人工直接改表为 resolved。系统只有在新 alert 版本、后续
 演练事实、新审计 bucket、更新质量快照或更新 postmortem 隔离/恢复历史证明规则不再命中时才关闭；复发后自动
@@ -500,7 +507,18 @@ assessment 改变且 captured time 晚于事件证据后才可能恢复；requar
 docker compose -f docker-compose.production.yml up -d --no-build api reflection-worker
 ```
 
-数据库回滚只在确认旧镜像不理解新 Schema 时执行。v0.28 的 `e9a2f4c6b810` 扩展七类事件、Playbook/证据码
+数据库回滚只在确认旧镜像不理解新 Schema 时执行。Wave 4 的 `f1b3c7d9e2a4` 增加再认证事实和退役字段；
+先停止 API、capacity-monitor、reflection-worker 并导出再认证/退役事实，再执行：
+
+```powershell
+docker compose -f docker-compose.production.yml stop api capacity-monitor reflection-worker
+alembic downgrade e9a2f4c6b810
+alembic upgrade f1b3c7d9e2a4
+```
+
+回滚演练必须在预发布数据库完成 upgrade → downgrade → upgrade 往返，并核对 `alembic current` 为
+`f1b3c7d9e2a4`。生产门禁会拒绝旧 head、缺少再认证 ground-truth case 或静态 Compose/Dockerfile 契约不完整。
+v0.28 的 `e9a2f4c6b810` 扩展七类事件、Playbook/证据码
 CHECK，并新增质量快照 captured-time 趋势索引。先停止 API 与 capacity-monitor，导出三类质量风险 incident、
 关联 remediation 和处置审计，再回退到 v0.27 head：
 

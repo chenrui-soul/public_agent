@@ -5,6 +5,18 @@
 已在 v0.28 全部生产门禁通过后自动启动。Wave 1 已完成领域契约、到期投影、独立职责权限和领域失败测试；
 当前 Wave 3 已完成：API、再认证队列、控制台和移动端静态验收。
 
+## Wave 4 实施状态
+
+- `capacity-monitor` 已串接只读 `scan_knowledge_lifecycle`，每轮采样输出
+  `knowledge_lifecycle` 聚合（current/due/overdue/quarantined/retired）；不会自动认证、隔离、退役或通知。
+- 只读治理演练新增再认证表的生命周期/决定/原因/版本/幂等约束及活动请求、租户状态、复盘索引检查；角色职责分离
+  对共享 read 权限保持兼容，state-changing 权限仍要求唯一角色归属。
+- 生产 ground truth 新增再认证闭环、退役 RAG 排除、Wave 4 迁移往返三项；门禁 head 更新为 `f1b3c7d9e2a4`。
+- README、TECHNICAL_DESIGN、DATABASE_SCHEMA、OPERATIONS_RUNBOOK 和 ADR 0031 已同步再认证、退役、monitor、
+  迁移回滚与排障规则。
+- 验证：定向测试与全量 Pytest 通过，Ruff/Mypy 通过，Alembic upgrade → downgrade → upgrade 通过；Docker 构建
+  可启动但生产脚本在当前网络环境的依赖 wheel 下载阶段长时间无输出，未将该项记为通过。
+
 ## Wave 3 验收证据
 
 - 新增治理 API：`GET /knowledge-recertifications`、`POST /postmortems/{id}/recertifications`，以及 review/approve/reject/retire 动作路由。

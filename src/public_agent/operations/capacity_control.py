@@ -601,6 +601,22 @@ class CapacityGovernanceKnowledgeLifecycleQuery(BaseModel):
     cursor: str | None = Field(default=None, max_length=500)
 
 
+class CapacityGovernanceKnowledgeLifecycleScanReport(BaseModel):
+    """Read-only aggregate emitted by the production monitor."""
+
+    model_config = ConfigDict(frozen=True)
+
+    handler_version: str
+    scanned: int = Field(ge=0)
+    current: int = Field(ge=0)
+    due: int = Field(ge=0)
+    overdue: int = Field(ge=0)
+    quarantined: int = Field(ge=0)
+    retired: int = Field(ge=0)
+    truncated: bool = False
+    scanned_at: datetime
+
+
 def project_governance_knowledge_lifecycle(
     *,
     postmortem_id: UUID,

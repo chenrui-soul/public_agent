@@ -317,6 +317,8 @@ async def test_capacity_audit_query_is_filtered_redacted_and_drill_is_read_only(
             "knowledge_quality_query_indexes",
             "knowledge_recovery_lifecycle_constraints",
             "knowledge_recovery_query_indexes",
+            "knowledge_recertification_lifecycle_constraints",
+            "knowledge_recertification_query_indexes",
         }
         quality_index_check = next(
             check

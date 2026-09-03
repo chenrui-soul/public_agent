@@ -10,6 +10,7 @@ from public_agent.operations.capacity import (
     ReflectionCapacityThresholds,
     assess_reflection_capacity,
 )
+from public_agent.operations.capacity_control import CapacityGovernanceKnowledgeLifecycleScanReport
 from public_agent.workers import (
     ReflectionBacklogSnapshot,
     ReflectionCapacitySnapshot,
@@ -69,6 +70,24 @@ class CapacityDriftScanner:
 
     async def scan_incidents(self) -> None:
         self.events.append("incident.scan")
+
+
+class CapacityLifecycleScanner:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    async def scan_knowledge_lifecycle(self) -> CapacityGovernanceKnowledgeLifecycleScanReport:
+        self.events.append("lifecycle.scan")
+        return CapacityGovernanceKnowledgeLifecycleScanReport(
+            handler_version="reflection-v1",
+            scanned=5,
+            current=2,
+            due=1,
+            overdue=1,
+            quarantined=0,
+            retired=1,
+            scanned_at=OBSERVED_AT,
+        )
 
 
 class CapacityPolicyResolver:
@@ -272,3 +291,26 @@ async def test_capacity_application_resolves_active_policy_on_every_run() -> Non
     assert source.stale_after_seconds == 30
     assert report.thresholds.ready_warning == 1
     assert report.status is ReflectionCapacityStatus.WARNING
+
+
+@pytest.mark.asyncio
+async def test_capacity_application_wires_read_only_knowledge_lifecycle_into_monitor() -> None:
+    events: list[str] = []
+    lifecycle = CapacityLifecycleScanner(events)
+    application = ReflectionCapacityApplication(
+        database=CapacityDatabase(events),
+        source=CapacitySource(events, _snapshot()),
+        handler_version="reflection-v1",
+        thresholds=_thresholds(),
+        lifecycle_scanner=lifecycle,
+    )
+
+    await application.run()
+
+    assert application.last_lifecycle_report is not None
+    assert application.last_lifecycle_report.overdue == 1
+    assert events == [
+        "database.ping",
+        "source.capacity_snapshot",
+        "lifecycle.scan",
+    ]

@@ -600,6 +600,12 @@ async def run_capacity_monitor_command(
                     {
                         "event": "reflection_capacity.sampled",
                         **report.model_dump(mode="json"),
+                        **(
+                            {"knowledge_lifecycle": lifecycle.model_dump(mode="json")}
+                            if (lifecycle := getattr(application, "last_lifecycle_report", None))
+                            is not None
+                            else {}
+                        ),
                     },
                     pretty=bool(args.pretty),
                 )

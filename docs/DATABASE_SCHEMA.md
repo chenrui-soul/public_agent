@@ -128,6 +128,7 @@ erDiagram
 | `reflection_capacity_governance_knowledge_feedback` | `id`, `postmortem_id`, `feedback_type`, `status`, `content` | 复盘知识反馈、隔离和审核 |
 | `reflection_capacity_governance_knowledge_quality_snapshots` | `id`, `postmortem_id`, `captured_at`, `quality_score`, `risk_level` | 知识质量快照和趋势 |
 | `reflection_capacity_governance_knowledge_recoveries` | `id`, `postmortem_id`, `status`, `restored_version`, `evidence` | 知识恢复、回滚和验证 |
+| `reflection_capacity_governance_knowledge_recertifications` | `id`, `postmortem_id`, `quality_snapshot_id`, `status`, `decision`, `reason`, `version` | 再认证申请、精确质量证据绑定和人工退役决定 |
 | `reflection_capacity_governance_audit_events` | `id`, `tenant_id`, `action`, `outcome`, `actor_subject` | 容量治理全链路追加式审计 |
 | `reflection_job_retry_requests` | `id`, `tenant_id`, `job_id`, `status`, `requested_by` | Dead-letter 任务人工重试请求 |
 | `reflection_job_operation_audit_events` | `id`, `tenant_id`, `job_id`, `operation`, `outcome` | 反思任务运维操作审计 |
@@ -141,6 +142,7 @@ erDiagram
 - 知识块同时保存 `tsvector` 全文索引字段和 pgvector embedding；RAG 结果只能作为 advisory 证据。
 - 候选使用作用域指纹和唯一索引去重，冲突合并保留 lineage，不覆盖原始候选。
 - Outbox 归档表按时间范围分区；清理前必须存在精确归档并通过保留策略检查。
+- postmortem `retired` 状态保留内容、向量、反馈和谱系；再认证表通过生命周期、决定/原因、版本、幂等和活动申请唯一性约束防止绕过审批。
 
 ## 6. 初始化与查看
 

@@ -24,6 +24,7 @@ from public_agent.operations.capacity import (
 )
 from public_agent.operations.capacity_control import (
     CapacityGovernanceIncidentThresholds,
+    CapacityGovernanceKnowledgeLifecycleScanReport,
     CapacityGovernanceKnowledgeQualityRiskThresholds,
 )
 from public_agent.providers import OpenAIModelProvider
@@ -140,6 +141,10 @@ class ReflectionCapacityIncidentScanner(Protocol):
     async def scan_incidents(self) -> object: ...
 
 
+class ReflectionCapacityKnowledgeLifecycleScanner(Protocol):
+    async def scan_knowledge_lifecycle(self) -> CapacityGovernanceKnowledgeLifecycleScanReport: ...
+
+
 class ReflectionCapacityPolicyResolver(Protocol):
     async def resolve_thresholds(
         self,
@@ -188,6 +193,10 @@ class ReflectionCapacityApplication:
     observation_sink: ReflectionCapacityObservationSink | None = None
     drift_scanner: ReflectionCapacityDriftScanner | None = None
     incident_scanner: ReflectionCapacityIncidentScanner | None = None
+    lifecycle_scanner: ReflectionCapacityKnowledgeLifecycleScanner | None = None
+    last_lifecycle_report: CapacityGovernanceKnowledgeLifecycleScanReport | None = field(
+        default=None, init=False
+    )
     owns_database: bool = True
     _closed: bool = field(default=False, init=False)
 
@@ -208,6 +217,8 @@ class ReflectionCapacityApplication:
             await self.observation_sink.record_observation(report)
         if self.drift_scanner is not None:
             await self.drift_scanner.scan_drift()
+        if self.lifecycle_scanner is not None:
+            self.last_lifecycle_report = await self.lifecycle_scanner.scan_knowledge_lifecycle()
         if self.incident_scanner is not None:
             await self.incident_scanner.scan_incidents()
         return report
@@ -376,6 +387,7 @@ def build_reflection_capacity_application(
         policy_resolver=governance,
         observation_sink=PostgresReflectionCapacityHistory(resolved_database.sessions),
         drift_scanner=capacity_control,
+        lifecycle_scanner=capacity_control,
         incident_scanner=capacity_control,
         owns_database=database is None,
     )

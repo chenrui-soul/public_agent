@@ -12,6 +12,9 @@ EXPECTED_CASES = {
     "capacity-governance-knowledge-feedback-isolation-loop",
     "capacity-governance-knowledge-quality-recovery-loop",
     "capacity-governance-knowledge-quality-trend-risk-loop",
+    "capacity-governance-knowledge-recertification-loop",
+    "capacity-governance-retired-rag-exclusion",
+    "capacity-governance-wave4-migration-roundtrip",
     "capacity-governance-postmortem-knowledge-loop",
     "capacity-governance-remediation-loop",
     "capacity-approval-console-security",
@@ -96,6 +99,8 @@ def main() -> int:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         output.append(f"$ {' '.join(command)}\n")
         output.append(completed.stdout)
@@ -115,7 +120,7 @@ def main() -> int:
         "capacity-policy",
         "capacity-trend",
         "outbox-maintain",
-        "e9a2f4c6b810 (head)",
+        "f1b3c7d9e2a4 (head)",
     ):
         if expected not in combined:
             raise RuntimeError(f"production gate output is missing: {expected}")

@@ -91,6 +91,8 @@ from public_agent.operations.capacity_control import (
     CapacityGovernanceKnowledgeFeedbackRecord,
     CapacityGovernanceKnowledgeFeedbackSignal,
     CapacityGovernanceKnowledgeFeedbackStatus,
+    CapacityGovernanceKnowledgeLifecycleScanReport,
+    CapacityGovernanceKnowledgeLifecycleStatus,
     CapacityGovernanceKnowledgeQualityAssessment,
     CapacityGovernanceKnowledgeQualityRiskThresholds,
     CapacityGovernanceKnowledgeQualitySnapshotPage,
@@ -103,6 +105,7 @@ from public_agent.operations.capacity_control import (
     CapacityGovernanceKnowledgeRecertificationDecision,
     CapacityGovernanceKnowledgeRecertificationInput,
     CapacityGovernanceKnowledgeRecertificationPage,
+    CapacityGovernanceKnowledgeRecertificationPolicy,
     CapacityGovernanceKnowledgeRecertificationQuery,
     CapacityGovernanceKnowledgeRecertificationReason,
     CapacityGovernanceKnowledgeRecertificationRecord,
@@ -144,6 +147,7 @@ from public_agent.operations.capacity_control import (
     expected_remediation_playbook,
     governance_knowledge_quality_assessment,
     postmortem_content_fingerprint,
+    project_governance_knowledge_lifecycle,
     render_postmortem_knowledge_content,
     validate_postmortem_classification,
 )
@@ -2419,6 +2423,76 @@ class PostgresReflectionCapacityControl:
             ),
         )
 
+    async def scan_knowledge_lifecycle(
+        self,
+        *,
+        policy: CapacityGovernanceKnowledgeRecertificationPolicy | None = None,
+        now: datetime | None = None,
+    ) -> CapacityGovernanceKnowledgeLifecycleScanReport:
+        """Project published governance knowledge status without mutating facts."""
+        checked_at = now or utc_now()
+        effective_policy = policy or CapacityGovernanceKnowledgeRecertificationPolicy(
+            policy_version=1
+        )
+        async with self._sessions() as session, session.begin():
+            tenant_id = await session.scalar(
+                select(TenantModel.id).where(TenantModel.slug == self.governance_tenant)
+            )
+            if tenant_id is None:
+                raise CapacityGovernanceAuthorizationError(
+                    "Unknown capacity governance tenant"
+                )
+            rows = tuple(
+                await session.scalars(
+                    select(ReflectionCapacityGovernancePostmortemModel)
+                    .where(
+                        *self._postmortem_scope(tenant_id),
+                        ReflectionCapacityGovernancePostmortemModel.status.in_(
+                            (
+                                CapacityGovernancePostmortemStatus.PUBLISHED.value,
+                                CapacityGovernancePostmortemStatus.QUARANTINED.value,
+                                CapacityGovernancePostmortemStatus.RETIRED.value,
+                            )
+                        ),
+                    )
+                    .order_by(
+                        ReflectionCapacityGovernancePostmortemModel.updated_at.desc(),
+                        ReflectionCapacityGovernancePostmortemModel.id.desc(),
+                    )
+                    .limit(10_001)
+                )
+            )
+        truncated = len(rows) > 10_000
+        bounded_rows = rows[:10_000]
+        counts = {status: 0 for status in CapacityGovernanceKnowledgeLifecycleStatus}
+        for row in bounded_rows:
+            lifecycle = project_governance_knowledge_lifecycle(
+                postmortem_id=row.id,
+                handler_version=row.handler_version,
+                postmortem_version=row.version,
+                knowledge_version=row.knowledge_version or "unknown",
+                content_fingerprint=row.content_fingerprint,
+                postmortem_status=CapacityGovernancePostmortemStatus(row.status),
+                published_at=row.published_at,
+                last_restored_at=row.last_restored_at,
+                last_certified_at=row.last_certified_at,
+                policy=effective_policy,
+                now=checked_at,
+                retired=row.status == CapacityGovernancePostmortemStatus.RETIRED.value,
+            )
+            counts[lifecycle.status] += 1
+        return CapacityGovernanceKnowledgeLifecycleScanReport(
+            handler_version=self.handler_version,
+            scanned=len(bounded_rows),
+            current=counts[CapacityGovernanceKnowledgeLifecycleStatus.CURRENT],
+            due=counts[CapacityGovernanceKnowledgeLifecycleStatus.DUE],
+            overdue=counts[CapacityGovernanceKnowledgeLifecycleStatus.OVERDUE],
+            quarantined=counts[CapacityGovernanceKnowledgeLifecycleStatus.QUARANTINED],
+            retired=counts[CapacityGovernanceKnowledgeLifecycleStatus.RETIRED],
+            truncated=truncated,
+            scanned_at=checked_at,
+        )
+
     async def request_knowledge_recertification(
         self,
         *,
@@ -3987,6 +4061,15 @@ class PostgresReflectionCapacityControl:
                 )
             )
         )
+        knowledge_recertification_constraint_names = frozenset(
+            await session.scalars(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conrelid = "
+                    "'reflection_capacity_governance_knowledge_recertifications'::regclass"
+                )
+            )
+        )
         quality_trigger_present = bool(
             await session.scalar(
                 text(
@@ -4065,6 +4148,16 @@ class PostgresReflectionCapacityControl:
                 )
             )
         )
+        knowledge_recertification_index_names = frozenset(
+            await session.scalars(
+                text(
+                    "SELECT indexname FROM pg_indexes "
+                    "WHERE schemaname = current_schema() "
+                    "AND tablename = "
+                    "'reflection_capacity_governance_knowledge_recertifications'"
+                )
+            )
+        )
         privileged_permissions = {
             CAPACITY_GOVERNANCE_REQUEST,
             CAPACITY_GOVERNANCE_APPROVE,
@@ -4085,10 +4178,19 @@ class PostgresReflectionCapacityControl:
             CAPACITY_KNOWLEDGE_QUALITY_ASSESS,
             CAPACITY_KNOWLEDGE_RECOVERY_REQUEST,
             CAPACITY_KNOWLEDGE_RECOVERY_REVIEW,
+            CAPACITY_KNOWLEDGE_RECERTIFICATION_READ,
+            CAPACITY_KNOWLEDGE_RECERTIFICATION_REQUEST,
+            CAPACITY_KNOWLEDGE_RECERTIFICATION_REVIEW,
+            CAPACITY_KNOWLEDGE_RETIREMENT,
+        }
+        # Read access is intentionally shared by viewer/requester/reviewer/retirement roles;
+        # separation is enforced for state-changing permissions only.
+        role_separation_permissions = privileged_permissions - {
+            CAPACITY_KNOWLEDGE_RECERTIFICATION_READ,
         }
         assignment_counts = {
             permission: sum(permission in role.permissions for role in CAPACITY_GOVERNANCE_ROLES)
-            for permission in privileged_permissions
+            for permission in role_separation_permissions
         }
         role_separation = all(count == 1 for count in assignment_counts.values())
         alert_lifecycle_constraints = {
@@ -4164,6 +4266,19 @@ class PostgresReflectionCapacityControl:
             "uq_capacity_knowledge_recoveries_active",
             "ix_capacity_knowledge_recoveries_tenant_status",
             "ix_capacity_knowledge_recoveries_postmortem",
+        }
+        knowledge_recertification_constraints = {
+            "ck_capacity_knowledge_recertifications_status",
+            "ck_capacity_knowledge_recertifications_decision",
+            "ck_capacity_knowledge_recertifications_reason",
+            "ck_capacity_knowledge_recertifications_versions",
+            "ck_capacity_knowledge_recertifications_lifecycle",
+            "uq_capacity_knowledge_recertifications_idempotency",
+        }
+        expected_knowledge_recertification_indexes = {
+            "uq_capacity_knowledge_recertifications_active",
+            "ix_capacity_knowledge_recertifications_tenant_status",
+            "ix_capacity_knowledge_recertifications_postmortem",
         }
         checks = (
             CapacityGovernanceDrillCheck(
@@ -4279,6 +4394,28 @@ class PostgresReflectionCapacityControl:
                 passed=(expected_knowledge_recovery_indexes <= knowledge_recovery_index_names),
                 detail=(
                     "Single active recovery plus bounded status and postmortem indexes are present."
+                ),
+            ),
+            CapacityGovernanceDrillCheck(
+                name="knowledge_recertification_lifecycle_constraints",
+                passed=(
+                    knowledge_recertification_constraints
+                    <= knowledge_recertification_constraint_names
+                ),
+                detail=(
+                    "Recertification decision, reason, idempotency and lifecycle "
+                    "constraints are present."
+                ),
+            ),
+            CapacityGovernanceDrillCheck(
+                name="knowledge_recertification_query_indexes",
+                passed=(
+                    expected_knowledge_recertification_indexes
+                    <= knowledge_recertification_index_names
+                ),
+                detail=(
+                    "Recertification active-request uniqueness and bounded tenant, "
+                    "status and postmortem indexes are present."
                 ),
             ),
         )
