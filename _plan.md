@@ -14,8 +14,8 @@
 - 生产 ground truth 新增再认证闭环、退役 RAG 排除、Wave 4 迁移往返三项；门禁 head 更新为 `f1b3c7d9e2a4`。
 - README、TECHNICAL_DESIGN、DATABASE_SCHEMA、OPERATIONS_RUNBOOK 和 ADR 0031 已同步再认证、退役、monitor、
   迁移回滚与排障规则。
-- 验证：定向测试与全量 Pytest 通过，Ruff/Mypy 通过，Alembic upgrade → downgrade → upgrade 通过；Docker 构建
-  可启动但生产脚本在当前网络环境的依赖 wheel 下载阶段长时间无输出，未将该项记为通过。
+- 验证：定向测试与全量 Pytest 通过，Ruff/Mypy 通过，Alembic upgrade → downgrade → upgrade 通过；完整生产门禁
+  在依赖下载短暂重试后通过，镜像以 uid/gid 10001 运行、pip check 正常且 Alembic head 为 `f1b3c7d9e2a4`。
 
 ## Wave 3 验收证据
 
