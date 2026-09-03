@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from uuid import UUID
 
@@ -43,6 +43,10 @@ CAPACITY_KNOWLEDGE_QUALITY_ASSESS = "operations.capacity_knowledge_quality:asses
 CAPACITY_KNOWLEDGE_RECOVERY_READ = "operations.capacity_knowledge_recovery:read"
 CAPACITY_KNOWLEDGE_RECOVERY_REQUEST = "operations.capacity_knowledge_recovery:request"
 CAPACITY_KNOWLEDGE_RECOVERY_REVIEW = "operations.capacity_knowledge_recovery:review"
+CAPACITY_KNOWLEDGE_RECERTIFICATION_READ = "operations.capacity_knowledge_recertification:read"
+CAPACITY_KNOWLEDGE_RECERTIFICATION_REQUEST = "operations.capacity_knowledge_recertification:request"
+CAPACITY_KNOWLEDGE_RECERTIFICATION_REVIEW = "operations.capacity_knowledge_recertification:review"
+CAPACITY_KNOWLEDGE_RETIREMENT = "operations.capacity_knowledge_retirement:decide"
 
 GOVERNANCE_KNOWLEDGE_NAMESPACE = "operations.governance.postmortems"
 GOVERNANCE_KNOWLEDGE_DOMAIN = "operations-governance"
@@ -78,6 +82,10 @@ CAPACITY_GOVERNANCE_PERMISSIONS = frozenset(
         CAPACITY_KNOWLEDGE_RECOVERY_READ,
         CAPACITY_KNOWLEDGE_RECOVERY_REQUEST,
         CAPACITY_KNOWLEDGE_RECOVERY_REVIEW,
+        CAPACITY_KNOWLEDGE_RECERTIFICATION_READ,
+        CAPACITY_KNOWLEDGE_RECERTIFICATION_REQUEST,
+        CAPACITY_KNOWLEDGE_RECERTIFICATION_REVIEW,
+        CAPACITY_KNOWLEDGE_RETIREMENT,
     }
 )
 
@@ -199,6 +207,28 @@ CAPACITY_GOVERNANCE_ROLES = (
     CapacityGovernanceRole(
         name="knowledge_recovery_reviewer",
         permissions=(CAPACITY_KNOWLEDGE_RECOVERY_READ, CAPACITY_KNOWLEDGE_RECOVERY_REVIEW),
+    ),
+    CapacityGovernanceRole(
+        name="knowledge_recertification_viewer",
+        permissions=(CAPACITY_KNOWLEDGE_RECERTIFICATION_READ,),
+    ),
+    CapacityGovernanceRole(
+        name="knowledge_recertification_requester",
+        permissions=(
+            CAPACITY_KNOWLEDGE_RECERTIFICATION_READ,
+            CAPACITY_KNOWLEDGE_RECERTIFICATION_REQUEST,
+        ),
+    ),
+    CapacityGovernanceRole(
+        name="knowledge_recertification_reviewer",
+        permissions=(
+            CAPACITY_KNOWLEDGE_RECERTIFICATION_READ,
+            CAPACITY_KNOWLEDGE_RECERTIFICATION_REVIEW,
+        ),
+    ),
+    CapacityGovernanceRole(
+        name="knowledge_retirement_operator",
+        permissions=(CAPACITY_KNOWLEDGE_RECERTIFICATION_READ, CAPACITY_KNOWLEDGE_RETIREMENT),
     ),
 )
 
@@ -400,6 +430,216 @@ class CapacityGovernanceKnowledgeRecoveryStatus(StrEnum):
     AWAITING_REVIEW = "awaiting_review"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class CapacityGovernanceKnowledgeLifecycleStatus(StrEnum):
+    CURRENT = "current"
+    DUE = "due"
+    OVERDUE = "overdue"
+    QUARANTINED = "quarantined"
+    RETIRED = "retired"
+
+
+class CapacityGovernanceKnowledgeRecertificationDecision(StrEnum):
+    CERTIFY = "certify"
+    REJECT = "reject"
+    RETIRE = "retire"
+
+
+class CapacityGovernanceKnowledgeRecertificationReason(StrEnum):
+    VALIDATION_PASSED = "validation_passed"
+    STALE_EVIDENCE = "stale_evidence"
+    QUALITY_RISK = "quality_risk"
+    REPLACED = "replaced"
+    SCOPE_ENDED = "scope_ended"
+
+
+class CapacityGovernanceKnowledgeRecertificationPolicy(BaseModel):
+    """Versioned, bounded policy used to derive governance knowledge due dates."""
+
+    model_config = ConfigDict(frozen=True)
+
+    policy_version: int = Field(ge=1)
+    window_seconds: int = Field(default=2_592_000, ge=86_400, le=31_536_000)
+    due_notice_seconds: int = Field(default=604_800, ge=3_600, le=31_536_000)
+
+    @model_validator(mode="after")
+    def require_ordered_window(self) -> CapacityGovernanceKnowledgeRecertificationPolicy:
+        if self.due_notice_seconds >= self.window_seconds:
+            raise ValueError("knowledge recertification due notice must be shorter than window")
+        return self
+
+
+class CapacityGovernanceKnowledgeRecertificationInput(BaseModel):
+    """Safe decision input; all source facts are re-checked by the persistence layer."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    postmortem_id: UUID
+    expected_postmortem_version: int = Field(ge=1)
+    knowledge_version: str = Field(min_length=1, max_length=100)
+    content_fingerprint: str = Field(min_length=64, max_length=64)
+    quality_snapshot_id: UUID
+    quality_evidence_fingerprint: str = Field(min_length=64, max_length=64)
+    decision: CapacityGovernanceKnowledgeRecertificationDecision
+    reason: CapacityGovernanceKnowledgeRecertificationReason
+
+    @field_validator("knowledge_version")
+    @classmethod
+    def normalize_knowledge_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("knowledge version must not be blank")
+        return normalized
+
+    @field_validator("content_fingerprint", "quality_evidence_fingerprint")
+    @classmethod
+    def require_sha256_fingerprint(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if re.fullmatch(r"[0-9a-f]{64}", normalized) is None:
+            raise ValueError("knowledge fingerprints must be lowercase SHA-256 values")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_restricted_reason(self) -> CapacityGovernanceKnowledgeRecertificationInput:
+        allowed: dict[
+            CapacityGovernanceKnowledgeRecertificationDecision,
+            frozenset[CapacityGovernanceKnowledgeRecertificationReason],
+        ] = {
+            CapacityGovernanceKnowledgeRecertificationDecision.CERTIFY: frozenset(
+                {CapacityGovernanceKnowledgeRecertificationReason.VALIDATION_PASSED}
+            ),
+            CapacityGovernanceKnowledgeRecertificationDecision.REJECT: frozenset(
+                {
+                    CapacityGovernanceKnowledgeRecertificationReason.STALE_EVIDENCE,
+                    CapacityGovernanceKnowledgeRecertificationReason.QUALITY_RISK,
+                }
+            ),
+            CapacityGovernanceKnowledgeRecertificationDecision.RETIRE: frozenset(
+                {
+                    CapacityGovernanceKnowledgeRecertificationReason.STALE_EVIDENCE,
+                    CapacityGovernanceKnowledgeRecertificationReason.QUALITY_RISK,
+                    CapacityGovernanceKnowledgeRecertificationReason.REPLACED,
+                    CapacityGovernanceKnowledgeRecertificationReason.SCOPE_ENDED,
+                }
+            ),
+        }
+        if self.reason not in allowed[self.decision]:
+            raise ValueError("recertification decision and reason are incompatible")
+        return self
+
+
+class CapacityGovernanceKnowledgeLifecycleRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    postmortem_id: UUID
+    handler_version: str = Field(min_length=1, max_length=64)
+    postmortem_version: int = Field(ge=1)
+    knowledge_version: str = Field(min_length=1, max_length=100)
+    content_fingerprint: str = Field(min_length=64, max_length=64)
+    status: CapacityGovernanceKnowledgeLifecycleStatus
+    anchor_at: datetime | None = None
+    due_at: datetime | None = None
+    last_certified_at: datetime | None = None
+    quality_snapshot_id: UUID | None = None
+    quality_evidence_fingerprint: str | None = None
+    generated_at: datetime
+
+
+class CapacityGovernanceKnowledgeLifecycleQuery(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: CapacityGovernanceKnowledgeLifecycleStatus | None = None
+    limit: int = Field(default=50, ge=1, le=100)
+    cursor: str | None = Field(default=None, max_length=500)
+
+
+def project_governance_knowledge_lifecycle(
+    *,
+    postmortem_id: UUID,
+    handler_version: str,
+    postmortem_version: int,
+    knowledge_version: str,
+    content_fingerprint: str,
+    postmortem_status: CapacityGovernancePostmortemStatus,
+    published_at: datetime | None,
+    last_restored_at: datetime | None,
+    last_certified_at: datetime | None,
+    policy: CapacityGovernanceKnowledgeRecertificationPolicy,
+    now: datetime,
+    retired: bool = False,
+    quality_snapshot_id: UUID | None = None,
+    quality_evidence_fingerprint: str | None = None,
+) -> CapacityGovernanceKnowledgeLifecycleRecord:
+    """Derive an operational status without mutating any governance fact."""
+
+    for name, value in (
+        ("now", now),
+        ("published_at", published_at),
+        ("last_restored_at", last_restored_at),
+        ("last_certified_at", last_certified_at),
+    ):
+        if value is not None and value.tzinfo is None:
+            raise ValueError(f"knowledge lifecycle {name} must be timezone-aware")
+        if value is not None and value.utcoffset() != timedelta(0):
+            raise ValueError(f"knowledge lifecycle {name} must use UTC")
+        if value is not None and value > now:
+            raise ValueError(f"knowledge lifecycle {name} must not be in the future")
+    if now.utcoffset() != timedelta(0):
+        raise ValueError("knowledge lifecycle now must use UTC")
+    if postmortem_version < 1:
+        raise ValueError("knowledge lifecycle postmortem version must be positive")
+    if not handler_version.strip() or not knowledge_version.strip():
+        raise ValueError("knowledge lifecycle versions must not be blank")
+    if re.fullmatch(r"[0-9a-f]{64}", content_fingerprint.lower()) is None:
+        raise ValueError("knowledge lifecycle content fingerprint must be SHA-256")
+    if quality_evidence_fingerprint is not None and re.fullmatch(
+        r"[0-9a-f]{64}", quality_evidence_fingerprint.lower()
+    ) is None:
+        raise ValueError("knowledge lifecycle evidence fingerprint must be SHA-256")
+    anchors = tuple(
+        value
+        for value in (published_at, last_restored_at, last_certified_at)
+        if value is not None
+    )
+    anchor_at = max(anchors) if anchors else None
+    if retired:
+        status = CapacityGovernanceKnowledgeLifecycleStatus.RETIRED
+        due_at = None
+    elif postmortem_status is CapacityGovernancePostmortemStatus.QUARANTINED:
+        status = CapacityGovernanceKnowledgeLifecycleStatus.QUARANTINED
+        due_at = None
+    elif postmortem_status is not CapacityGovernancePostmortemStatus.PUBLISHED:
+        raise ValueError("knowledge lifecycle requires published or quarantined knowledge")
+    else:
+        if anchor_at is None:
+            raise ValueError("published knowledge requires a lifecycle anchor")
+        due_at = anchor_at + timedelta(seconds=policy.window_seconds)
+        notice_at = due_at - timedelta(seconds=policy.due_notice_seconds)
+        if now >= due_at:
+            status = CapacityGovernanceKnowledgeLifecycleStatus.OVERDUE
+        elif now >= notice_at:
+            status = CapacityGovernanceKnowledgeLifecycleStatus.DUE
+        else:
+            status = CapacityGovernanceKnowledgeLifecycleStatus.CURRENT
+    return CapacityGovernanceKnowledgeLifecycleRecord(
+        postmortem_id=postmortem_id,
+        handler_version=handler_version.strip(),
+        postmortem_version=postmortem_version,
+        knowledge_version=knowledge_version.strip(),
+        content_fingerprint=content_fingerprint.lower(),
+        status=status,
+        anchor_at=anchor_at,
+        due_at=due_at,
+        last_certified_at=last_certified_at,
+        quality_snapshot_id=quality_snapshot_id,
+        quality_evidence_fingerprint=(
+            quality_evidence_fingerprint.lower()
+            if quality_evidence_fingerprint is not None
+            else None
+        ),
+        generated_at=now.astimezone(UTC),
+    )
 
 
 class CapacityGovernanceKnowledgeFeedbackInput(BaseModel):

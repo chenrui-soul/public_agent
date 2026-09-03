@@ -2,8 +2,8 @@
 
 ## 当前状态
 
-已在 v0.28 全部生产门禁通过后自动启动。当前进入 Wave 1：定义再认证策略、到期投影、独立职责权限、受控退役
-状态和领域失败测试；不等待额外确认。
+已在 v0.28 全部生产门禁通过后自动启动。Wave 1 已完成领域契约、到期投影、独立职责权限和领域失败测试；
+当前进入 Wave 2：PostgreSQL 认证事实、可逆迁移、并发幂等、退役原子性和 RAG 排除。
 
 ## 初始范围
 
@@ -29,6 +29,16 @@
 2. PostgreSQL 认证事实、可逆迁移、并发幂等、退役原子性、RAG 排除和只读演练扩展。
 3. API、控制台再认证队列、独立 403、断开清理和 390px 浏览器验收。
 4. monitor/事件串接、容量与索引验证、生产 ground truth、ADR、运行手册、全量门禁和发布镜像。
+
+## Wave 1 验收证据
+
+- 新增版本化 `CapacityGovernanceKnowledgeRecertificationPolicy`，窗口为 1 天至 1 年，到期提醒必须短于认证窗口。
+- 新增 `current/due/overdue/quarantined/retired` 生命周期状态投影；投影只读，不写入 PostgreSQL，不把到期自动转为隔离或退役。
+- 生命周期锚点只接受最近认证、恢复或发布事实；published 缺失锚点、未来时间、naive 时间和非 published/quarantined 状态均失败关闭。
+- 新增 `certify/reject/retire` 受限决定 DTO，强制绑定 postmortem/version、knowledge version、内容指纹、质量快照 ID 和证据指纹；决定与理由不兼容时拒绝。
+- 新增独立 `read/request/review/retirement` 权限和最小权限角色；请求人不拥有 review，reviewer 不拥有 retirement。
+- 新增领域反例测试 `tests/test_knowledge_recertification.py`；定向 Wave 1 + 既有治理测试 38/38，全量离线回归 252 passed / 48 skipped。
+- Ruff 目标文件通过；Mypy 91 个源码文件通过。PostgreSQL 集成套件因当前环境无可用数据库未计入本轮通过证据。
 
 ## 影响面与规划门禁
 

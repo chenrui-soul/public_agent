@@ -1,9 +1,9 @@
 ## Handoff Checkpoint
 
-**更新时间**: 2026-08-25 22:55
+**更新时间**: 2026-09-03
 **当前目标**: v0.29 治理知识再认证与受控退役闭环
-**当前阶段**: v0.28 已完成全部验收；v0.29 已自动启动，Wave 1 进行中
-**完成度**: v0.28 100%；v0.29 规划完成
+**当前阶段**: v0.28 已完成全部验收；v0.29 Wave 1 已完成，进入 Wave 2
+**完成度**: v0.28 100%；v0.29 Wave 1 100%，Wave 2 待实现
 
 ### 已完成
 
@@ -13,10 +13,12 @@
 - Alembic head `e9a2f4c6b810`；ADR 0030、README、技术设计、运行手册和 27 条生产 ground truth
 - 定向 72/72、全量 PostgreSQL Pytest 291/291、生产子集 116/116、Ruff、Mypy 91、Node、迁移往返/current/check、Compose
 - 生产镜像 digest `sha256:74ca38d5b43d961ba9795c0e5e3db45b1f102f480adc3bae26e89b2575402964`
+- v0.29 Wave 1：版本化再认证策略、`current/due/overdue/quarantined/retired` 投影、独立 read/request/review/retirement 权限、受限决定 DTO 和领域反例测试
+- 验证：定向 38/38；全量离线 252 passed / 48 skipped；Ruff 与 Mypy 91 个源码文件通过
 
 ### 未完成
 
-- v0.29 Wave 1：定义再认证策略/DTO、`current/due/overdue/quarantined/retired` 投影、独立权限、受限决定与领域反例。
+- v0.29 Wave 2：PostgreSQL 认证事实、可逆迁移、并发幂等、退役原子性、RAG 排除和只读演练扩展
 
 ### 关键边界
 

@@ -1561,3 +1561,21 @@ request/approve/execute/verify 权限独立，请求人不能审批，执行人�
 
 - **规范名称**：质量风险截断失败关闭（Quality Risk Truncation Fail-Closed）
 - **定义**：当快照、postmortem、候选或既有事件读取超过配置上限时标记 `truncated`，并停止不完整的质量风险创建与恢复判断，禁止解释为健康。
+
+## 2026-09-03 v0.29 Wave 1：治理知识再认证契约
+
+### 关键决策
+
+- 再认证窗口使用版本化 `CapacityGovernanceKnowledgeRecertificationPolicy`，只读生命周期投影派生 `current/due/overdue/quarantined/retired`，时间到期不直接改变 PostgreSQL 事实。
+- 再认证决定必须绑定精确 postmortem version、knowledge version、content fingerprint、quality snapshot 和 evidence fingerprint；认证、拒绝、退役理由采用受限枚举。
+- 再认证读取、请求、评审和退役使用独立权限与最小权限角色；请求人不含评审权限，评审人不含退役权限。
+
+### 验证与遗留
+
+- 定向 Wave 1 + 既有治理测试 38/38；全量离线 252 passed / 48 skipped；Ruff 与 Mypy 91 个源码文件通过。
+- PostgreSQL 认证事实、并发幂等、退役原子性、RAG 排除和迁移留到 v0.29 Wave 2；当前环境未提供 PostgreSQL 集成服务。
+
+### Glossary Addendum: 治理知识再认证
+
+- **生命周期投影** | Governance Knowledge Lifecycle Projection | 从 PostgreSQL 已发布/隔离事实、最近认证/恢复/发布锚点、UTC 当前时间和版本化策略确定性派生的只读运营状态。
+- **再认证窗口** | Knowledge Recertification Window | 由版本化策略定义的有效期和到期提醒窗口；到期只产生待办或风险，不自动认证、隔离或退役。
