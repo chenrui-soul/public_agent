@@ -142,9 +142,7 @@ class _CapacityService:
             update={"incident_id": incident_id, "playbook": playbook}
         )
 
-    async def approve_remediation(
-        self, *, remediation_id, expected_version, actor
-    ):
+    async def approve_remediation(self, *, remediation_id, expected_version, actor):
         self.actor_subject = actor.subject
         return _remediation_record().model_copy(
             update={
@@ -155,9 +153,7 @@ class _CapacityService:
             }
         )
 
-    async def reject_remediation(
-        self, *, remediation_id, expected_version, actor
-    ):
+    async def reject_remediation(self, *, remediation_id, expected_version, actor):
         self.actor_subject = actor.subject
         return _remediation_record().model_copy(
             update={
@@ -184,9 +180,7 @@ class _CapacityService:
             }
         )
 
-    async def verify_remediation(
-        self, *, remediation_id, expected_version, actor
-    ):
+    async def verify_remediation(self, *, remediation_id, expected_version, actor):
         self.actor_subject = actor.subject
         return _remediation_record().model_copy(
             update={
@@ -220,9 +214,7 @@ class _CapacityService:
             }
         )
 
-    async def approve_postmortem(
-        self, *, postmortem_id, expected_version, actor
-    ):
+    async def approve_postmortem(self, *, postmortem_id, expected_version, actor):
         self.actor_subject = actor.subject
         return _postmortem_record().model_copy(
             update={
@@ -237,9 +229,7 @@ class _CapacityService:
             }
         )
 
-    async def reject_postmortem(
-        self, *, postmortem_id, expected_version, actor
-    ):
+    async def reject_postmortem(self, *, postmortem_id, expected_version, actor):
         self.actor_subject = actor.subject
         return _postmortem_record().model_copy(
             update={
@@ -276,9 +266,7 @@ class _CapacityService:
             }
         )
 
-    async def confirm_knowledge_feedback(
-        self, *, feedback_id, expected_version, actor
-    ):
+    async def confirm_knowledge_feedback(self, *, feedback_id, expected_version, actor):
         self.actor_subject = actor.subject
         return _feedback_record().model_copy(
             update={
@@ -290,9 +278,7 @@ class _CapacityService:
             }
         )
 
-    async def dismiss_knowledge_feedback(
-        self, *, feedback_id, expected_version, actor
-    ):
+    async def dismiss_knowledge_feedback(self, *, feedback_id, expected_version, actor):
         self.actor_subject = actor.subject
         return _feedback_record().model_copy(
             update={
@@ -306,9 +292,7 @@ class _CapacityService:
 
     async def list_knowledge_quality_snapshots(self, _query, *, actor):
         self.last_actor = actor
-        return CapacityGovernanceKnowledgeQualitySnapshotPage(
-            items=(_quality_snapshot_record(),)
-        )
+        return CapacityGovernanceKnowledgeQualitySnapshotPage(items=(_quality_snapshot_record(),))
 
     async def capture_knowledge_quality_snapshot(
         self, *, postmortem_id, expected_postmortem_version, actor
@@ -355,9 +339,7 @@ class _CapacityService:
             }
         )
 
-    async def approve_knowledge_recovery(
-        self, *, recovery_id, expected_version, actor
-    ):
+    async def approve_knowledge_recovery(self, *, recovery_id, expected_version, actor):
         self.last_actor = actor
         return _recovery_record().model_copy(
             update={
@@ -370,9 +352,7 @@ class _CapacityService:
             }
         )
 
-    async def reject_knowledge_recovery(
-        self, *, recovery_id, expected_version, actor
-    ):
+    async def reject_knowledge_recovery(self, *, recovery_id, expected_version, actor):
         self.last_actor = actor
         return _recovery_record().model_copy(
             update={
@@ -606,6 +586,7 @@ def test_capacity_console_is_a_data_free_no_store_shell() -> None:
     assert "/knowledge-quality-snapshots" in script.text
     assert "/knowledge-quality-trend" in script.text
     assert "/knowledge-recoveries" in script.text
+    assert "/knowledge-recertifications" in script.text
     assert "REMEDIATION WORKFLOW" in response.text
     assert 'id="postmortem-dialog"' in response.text
     assert 'id="postmortem-summary"' in response.text
@@ -619,6 +600,8 @@ def test_capacity_console_is_a_data_free_no_store_shell() -> None:
     assert 'id="knowledge-quality-trend-empty"' in response.text
     assert 'id="knowledge-quality-assessment"' in response.text
     assert 'id="knowledge-recovery-status"' in response.text
+    assert 'id="knowledge-recertification-status"' in response.text
+    assert 'id="knowledge-recertifications"' in response.text
     assert 'value="quarantined"' in response.text
     assert 'value="superseded"' in response.text
     assert 'value="unsafe"' in response.text
@@ -637,6 +620,9 @@ def test_capacity_console_is_a_data_free_no_store_shell() -> None:
     assert "无治理知识质量趋势读取权限" in script.text
     assert "无治理知识质量读取权限" in script.text
     assert "无隔离恢复读取权限" in script.text
+    assert "无治理知识再认证读取权限" in script.text
+    assert "knowledgeRecertificationPath" in script.text
+    assert "renderKnowledgeRecertifications" in script.text
     assert "'knowledgeQualityTrend'" in script.text
     assert "kind:'knowledgeQualityTrend'" in script.text
     assert "knowledge_unsafe_persistent:'knowledge_safety_containment'" in script.text
@@ -670,20 +656,16 @@ def test_capacity_api_uses_trusted_principal_and_returns_bounded_pages() -> None
         drill = client.get("/v1/operations/capacity-governance/drill-report")
         incidents = client.get("/v1/operations/capacity-governance/incidents?limit=10")
         incident = client.get(
-            "/v1/operations/capacity-governance/incidents/"
-            "00000000-0000-0000-0000-000000000024"
+            "/v1/operations/capacity-governance/incidents/00000000-0000-0000-0000-000000000024"
         )
         acknowledged = client.post(
             "/v1/operations/capacity-governance/incidents/"
             "00000000-0000-0000-0000-000000000024/acknowledge",
             json={"expected_version": 1},
         )
-        remediations = client.get(
-            "/v1/operations/capacity-governance/remediations?limit=10"
-        )
+        remediations = client.get("/v1/operations/capacity-governance/remediations?limit=10")
         remediation = client.get(
-            "/v1/operations/capacity-governance/remediations/"
-            "00000000-0000-0000-0000-000000000025"
+            "/v1/operations/capacity-governance/remediations/00000000-0000-0000-0000-000000000025"
         )
         created_remediation = client.post(
             "/v1/operations/capacity-governance/incidents/"
@@ -702,12 +684,9 @@ def test_capacity_api_uses_trusted_principal_and_returns_bounded_pages() -> None
                 "evidence": "schema_control_restored",
             },
         )
-        postmortems = client.get(
-            "/v1/operations/capacity-governance/postmortems?limit=10"
-        )
+        postmortems = client.get("/v1/operations/capacity-governance/postmortems?limit=10")
         postmortem = client.get(
-            "/v1/operations/capacity-governance/postmortems/"
-            "00000000-0000-0000-0000-000000000026"
+            "/v1/operations/capacity-governance/postmortems/00000000-0000-0000-0000-000000000026"
         )
         created_postmortem = client.post(
             "/v1/operations/capacity-governance/remediations/"
@@ -725,9 +704,7 @@ def test_capacity_api_uses_trusted_principal_and_returns_bounded_pages() -> None
             "00000000-0000-0000-0000-000000000026/approve",
             json={"expected_version": 1},
         )
-        feedback = client.get(
-            "/v1/operations/capacity-governance/knowledge-feedback?limit=10"
-        )
+        feedback = client.get("/v1/operations/capacity-governance/knowledge-feedback?limit=10")
         reported_feedback = client.post(
             "/v1/operations/capacity-governance/postmortems/"
             "00000000-0000-0000-0000-000000000026/feedback",
@@ -836,9 +813,7 @@ def test_capacity_api_maps_authorization_failure_to_safe_403() -> None:
     assert response.json() == {
         "error": {
             "code": "capacity_governance_forbidden",
-            "message": (
-                "The authenticated principal cannot perform this capacity action."
-            ),
+            "message": ("The authenticated principal cannot perform this capacity action."),
         }
     }
 
@@ -851,9 +826,7 @@ def test_capacity_api_rejects_invalid_uuid_without_leaking_details() -> None:
     )
 
     with TestClient(app) as client:
-        response = client.get(
-            "/v1/operations/capacity-governance/requests/not-a-uuid"
-        )
+        response = client.get("/v1/operations/capacity-governance/requests/not-a-uuid")
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "request_validation_failed"

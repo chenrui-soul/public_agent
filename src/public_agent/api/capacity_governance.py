@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated, Protocol, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Query, status
+from fastapi import APIRouter, Depends, FastAPI, Header, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from public_agent.api.base import APIError, APIPrincipal
@@ -46,6 +46,13 @@ from public_agent.operations.capacity_control import (
     CapacityGovernanceKnowledgeQualityTrendBucket,
     CapacityGovernanceKnowledgeQualityTrendQuery,
     CapacityGovernanceKnowledgeQualityTrendReport,
+    CapacityGovernanceKnowledgeRecertificationDecision,
+    CapacityGovernanceKnowledgeRecertificationInput,
+    CapacityGovernanceKnowledgeRecertificationPage,
+    CapacityGovernanceKnowledgeRecertificationQuery,
+    CapacityGovernanceKnowledgeRecertificationReason,
+    CapacityGovernanceKnowledgeRecertificationRecord,
+    CapacityGovernanceKnowledgeRecertificationStatus,
     CapacityGovernanceKnowledgeRecoveryPage,
     CapacityGovernanceKnowledgeRecoveryQuery,
     CapacityGovernanceKnowledgeRecoveryReason,
@@ -414,6 +421,37 @@ class CapacityGovernanceService(Protocol):
         actor: AuthenticatedPrincipal,
     ) -> CapacityGovernanceKnowledgeRecoveryRecord: ...
 
+    async def list_knowledge_recertifications(
+        self,
+        query: CapacityGovernanceKnowledgeRecertificationQuery,
+        *,
+        actor: AuthenticatedPrincipal,
+    ) -> CapacityGovernanceKnowledgeRecertificationPage: ...
+
+    async def request_knowledge_recertification(
+        self,
+        *,
+        content: CapacityGovernanceKnowledgeRecertificationInput,
+        actor: AuthenticatedPrincipal,
+        idempotency_key: str | None = None,
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord: ...
+
+    async def review_knowledge_recertification(
+        self, *, recertification_id: UUID, expected_version: int, actor: AuthenticatedPrincipal
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord: ...
+
+    async def approve_knowledge_recertification(
+        self, *, recertification_id: UUID, expected_version: int, actor: AuthenticatedPrincipal
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord: ...
+
+    async def reject_knowledge_recertification(
+        self, *, recertification_id: UUID, expected_version: int, actor: AuthenticatedPrincipal
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord: ...
+
+    async def retire_knowledge(
+        self, *, recertification_id: UUID, expected_version: int, actor: AuthenticatedPrincipal
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord: ...
+
 
 class CapacityRequestCreateBody(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -487,6 +525,18 @@ class CapacityKnowledgeRecoveryCreateBody(BaseModel):
     reason: CapacityGovernanceKnowledgeRecoveryReason
 
 
+class CapacityKnowledgeRecertificationCreateBody(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expected_postmortem_version: int = Field(ge=1)
+    knowledge_version: str = Field(min_length=1, max_length=100)
+    content_fingerprint: str = Field(min_length=64, max_length=64)
+    quality_snapshot_id: UUID
+    quality_evidence_fingerprint: str = Field(min_length=64, max_length=64)
+    decision: CapacityGovernanceKnowledgeRecertificationDecision
+    reason: CapacityGovernanceKnowledgeRecertificationReason
+
+
 class CapacityAlertResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -516,9 +566,7 @@ class CapacityAlertResponse(BaseModel):
     @classmethod
     def from_record(cls, record: CapacityGovernanceAlertRecord) -> CapacityAlertResponse:
         return cls(
-            **record.model_dump(
-                exclude={"acknowledged_principal_id", "acknowledged_token_id"}
-            )
+            **record.model_dump(exclude={"acknowledged_principal_id", "acknowledged_token_id"})
         )
 
 
@@ -603,12 +651,9 @@ def install_capacity_governance_routes(
         try:
             return await service.create_change_request(
                 calibration_id=body.calibration_id,
-                window_required_seconds=(
-                    body.window_required_seconds or default_window_seconds
-                ),
+                window_required_seconds=(body.window_required_seconds or default_window_seconds),
                 window_minimum_observations=(
-                    body.window_minimum_observations
-                    or default_window_minimum_observations
+                    body.window_minimum_observations or default_window_minimum_observations
                 ),
                 actor=current,
             )
@@ -1290,6 +1335,103 @@ def install_capacity_governance_routes(
         "/knowledge-recoveries/{recovery_id}/reject",
         response_model=CapacityGovernanceKnowledgeRecoveryRecord,
     )(knowledge_recovery_action_route("reject_knowledge_recovery"))
+
+    @router.get(
+        "/knowledge-recertifications",
+        response_model=CapacityGovernanceKnowledgeRecertificationPage,
+    )
+    async def list_knowledge_recertifications(
+        recertification_status: Annotated[
+            CapacityGovernanceKnowledgeRecertificationStatus | None,
+            Query(alias="status"),
+        ] = None,
+        postmortem_id: UUID | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        cursor: Annotated[str | None, Query(max_length=500)] = None,
+        current: CapacityGovernancePrincipal = principal_depends,
+    ) -> CapacityGovernanceKnowledgeRecertificationPage:
+        try:
+            return await service.list_knowledge_recertifications(
+                CapacityGovernanceKnowledgeRecertificationQuery(
+                    status=recertification_status,
+                    postmortem_id=postmortem_id,
+                    limit=limit,
+                    cursor=cursor,
+                ),
+                actor=current,
+            )
+        except Exception as exc:
+            raise _mapped_error(exc) from None
+
+    @router.post(
+        "/postmortems/{postmortem_id}/recertifications",
+        response_model=CapacityGovernanceKnowledgeRecertificationRecord,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def request_knowledge_recertification(
+        postmortem_id: UUID,
+        body: CapacityKnowledgeRecertificationCreateBody,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        current: CapacityGovernancePrincipal = principal_depends,
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord:
+        try:
+            content = CapacityGovernanceKnowledgeRecertificationInput(
+                postmortem_id=postmortem_id,
+                expected_postmortem_version=body.expected_postmortem_version,
+                knowledge_version=body.knowledge_version,
+                content_fingerprint=body.content_fingerprint,
+                quality_snapshot_id=body.quality_snapshot_id,
+                quality_evidence_fingerprint=body.quality_evidence_fingerprint,
+                decision=body.decision,
+                reason=body.reason,
+            )
+            return await service.request_knowledge_recertification(
+                content=content,
+                actor=current,
+                idempotency_key=idempotency_key,
+            )
+        except Exception as exc:
+            raise _mapped_error(exc) from None
+
+    def knowledge_recertification_action_route(
+        action: str,
+    ) -> Callable[..., Awaitable[CapacityGovernanceKnowledgeRecertificationRecord]]:
+        async def execute(
+            recertification_id: UUID,
+            body: ExpectedVersionBody,
+            current: CapacityGovernancePrincipal = principal_depends,
+        ) -> CapacityGovernanceKnowledgeRecertificationRecord:
+            try:
+                handler = cast(
+                    Callable[..., Awaitable[CapacityGovernanceKnowledgeRecertificationRecord]],
+                    getattr(service, action),
+                )
+                return await handler(
+                    recertification_id=recertification_id,
+                    expected_version=body.expected_version,
+                    actor=current,
+                )
+            except Exception as exc:
+                raise _mapped_error(exc) from None
+
+        return execute
+
+    router.post(
+        "/knowledge-recertifications/{recertification_id}/review",
+        response_model=CapacityGovernanceKnowledgeRecertificationRecord,
+    )(knowledge_recertification_action_route("review_knowledge_recertification"))
+    router.post(
+        "/knowledge-recertifications/{recertification_id}/approve",
+        response_model=CapacityGovernanceKnowledgeRecertificationRecord,
+    )(knowledge_recertification_action_route("approve_knowledge_recertification"))
+    router.post(
+        "/knowledge-recertifications/{recertification_id}/reject",
+        response_model=CapacityGovernanceKnowledgeRecertificationRecord,
+    )(knowledge_recertification_action_route("reject_knowledge_recertification"))
+    router.post(
+        "/knowledge-recertifications/{recertification_id}/retire",
+        response_model=CapacityGovernanceKnowledgeRecertificationRecord,
+    )(knowledge_recertification_action_route("retire_knowledge"))
 
     @router.get("/drill-report", response_model=CapacityGovernanceDrillReport)
     async def governance_drill(

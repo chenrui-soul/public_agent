@@ -3,7 +3,15 @@
 ## 当前状态
 
 已在 v0.28 全部生产门禁通过后自动启动。Wave 1 已完成领域契约、到期投影、独立职责权限和领域失败测试；
-当前 Wave 2 已完成：PostgreSQL 认证事实、可逆迁移、并发幂等、退役原子性和 RAG 排除。
+当前 Wave 3 已完成：API、再认证队列、控制台和移动端静态验收。
+
+## Wave 3 验收证据
+
+- 新增治理 API：`GET /knowledge-recertifications`、`POST /postmortems/{id}/recertifications`，以及 review/approve/reject/retire 动作路由。
+- API DTO 强制绑定 postmortem/version、knowledge version、内容指纹、质量快照和证据指纹；支持 `Idempotency-Key` 透传。
+- 控制台新增再认证队列、状态筛选、评审/退役操作、局部 403 降级和断开清理；加载链路使用 `Promise.allSettled`，不会因再认证权限缺失阻断其他面板。
+- 390px 浏览器插件访问本机服务被 `ERR_BLOCKED_BY_CLIENT` 阻断；已完成仓库静态移动端契约检查、DOM/脚本节点检查和无横向溢出 CSS 继承复核，未伪造浏览器实测结果。
+- API/控制台定向测试、Wave 1 领域测试、PostgreSQL 治理/RAG 回归、全量离线 Pytest、Ruff 和 Mypy 通过。
 
 ## Wave 2 验收证据
 
