@@ -388,6 +388,7 @@ class CapacityGovernancePostmortemStatus(StrEnum):
     PUBLISHED = "published"
     QUARANTINED = "quarantined"
     REJECTED = "rejected"
+    RETIRED = "retired"
 
 
 class CapacityGovernanceKnowledgeFeedbackSignal(StrEnum):
@@ -452,6 +453,13 @@ class CapacityGovernanceKnowledgeRecertificationReason(StrEnum):
     QUALITY_RISK = "quality_risk"
     REPLACED = "replaced"
     SCOPE_ENDED = "scope_ended"
+
+
+class CapacityGovernanceKnowledgeRecertificationStatus(StrEnum):
+    AWAITING_REVIEW = "awaiting_review"
+    CERTIFIED = "certified"
+    REJECTED = "rejected"
+    RETIRED = "retired"
 
 
 class CapacityGovernanceKnowledgeRecertificationPolicy(BaseModel):
@@ -529,6 +537,45 @@ class CapacityGovernanceKnowledgeRecertificationInput(BaseModel):
         return self
 
 
+class CapacityGovernanceKnowledgeRecertificationRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    postmortem_id: UUID
+    quality_snapshot_id: UUID
+    handler_version: str
+    postmortem_version: int = Field(ge=1)
+    knowledge_version: str = Field(min_length=1, max_length=100)
+    content_fingerprint: str = Field(min_length=64, max_length=64)
+    quality_evidence_fingerprint: str = Field(min_length=64, max_length=64)
+    decision: CapacityGovernanceKnowledgeRecertificationDecision
+    reason: CapacityGovernanceKnowledgeRecertificationReason
+    status: CapacityGovernanceKnowledgeRecertificationStatus
+    version: int = Field(ge=1)
+    requested_by: str
+    requested_at: datetime
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CapacityGovernanceKnowledgeRecertificationQuery(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: CapacityGovernanceKnowledgeRecertificationStatus | None = None
+    postmortem_id: UUID | None = None
+    limit: int = Field(default=50, ge=1, le=100)
+    cursor: str | None = Field(default=None, max_length=500)
+
+
+class CapacityGovernanceKnowledgeRecertificationPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[CapacityGovernanceKnowledgeRecertificationRecord, ...]
+    next_cursor: str | None = None
+
+
 class CapacityGovernanceKnowledgeLifecycleRecord(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -593,17 +640,16 @@ def project_governance_knowledge_lifecycle(
         raise ValueError("knowledge lifecycle versions must not be blank")
     if re.fullmatch(r"[0-9a-f]{64}", content_fingerprint.lower()) is None:
         raise ValueError("knowledge lifecycle content fingerprint must be SHA-256")
-    if quality_evidence_fingerprint is not None and re.fullmatch(
-        r"[0-9a-f]{64}", quality_evidence_fingerprint.lower()
-    ) is None:
+    if (
+        quality_evidence_fingerprint is not None
+        and re.fullmatch(r"[0-9a-f]{64}", quality_evidence_fingerprint.lower()) is None
+    ):
         raise ValueError("knowledge lifecycle evidence fingerprint must be SHA-256")
     anchors = tuple(
-        value
-        for value in (published_at, last_restored_at, last_certified_at)
-        if value is not None
+        value for value in (published_at, last_restored_at, last_certified_at) if value is not None
     )
     anchor_at = max(anchors) if anchors else None
-    if retired:
+    if retired or postmortem_status is CapacityGovernancePostmortemStatus.RETIRED:
         status = CapacityGovernanceKnowledgeLifecycleStatus.RETIRED
         due_at = None
     elif postmortem_status is CapacityGovernancePostmortemStatus.QUARANTINED:
@@ -650,9 +696,9 @@ class CapacityGovernanceKnowledgeFeedbackInput(BaseModel):
 
     @model_validator(mode="after")
     def require_consistent_reason(self) -> CapacityGovernanceKnowledgeFeedbackInput:
-        if (
-            self.signal is CapacityGovernanceKnowledgeFeedbackSignal.SAFETY_CONCERN
-        ) != (self.reason is CapacityGovernanceKnowledgeFeedbackReason.UNSAFE_CONTENT):
+        if (self.signal is CapacityGovernanceKnowledgeFeedbackSignal.SAFETY_CONCERN) != (
+            self.reason is CapacityGovernanceKnowledgeFeedbackReason.UNSAFE_CONTENT
+        ):
             raise ValueError("knowledge feedback safety signal and reason must match")
         return self
 
@@ -840,12 +886,8 @@ CAPACITY_INCIDENT_RULE_VERSIONS = {
     CapacityGovernanceIncidentSignal.KNOWLEDGE_UNSAFE_PERSISTENT: (
         "knowledge-unsafe-persistent/v1"
     ),
-    CapacityGovernanceIncidentSignal.KNOWLEDGE_DEGRADED_REPEAT: (
-        "knowledge-degraded-repeat/v1"
-    ),
-    CapacityGovernanceIncidentSignal.KNOWLEDGE_REQUARANTINED: (
-        "knowledge-requarantined/v1"
-    ),
+    CapacityGovernanceIncidentSignal.KNOWLEDGE_DEGRADED_REPEAT: ("knowledge-degraded-repeat/v1"),
+    CapacityGovernanceIncidentSignal.KNOWLEDGE_REQUARANTINED: ("knowledge-requarantined/v1"),
 }
 
 
@@ -1029,9 +1071,7 @@ class CapacityGovernanceKnowledgeQualityRiskThresholds(BaseModel):
             raise ValueError("knowledge quality unsafe thresholds must be ordered")
         if self.degraded_warning_count > self.degraded_critical_count:
             raise ValueError("knowledge quality degraded thresholds must be ordered")
-        if max(self.unsafe_critical_count, self.degraded_critical_count) > (
-            self.maximum_snapshots
-        ):
+        if max(self.unsafe_critical_count, self.degraded_critical_count) > (self.maximum_snapshots):
             raise ValueError("knowledge quality maximum snapshots must cover critical")
         return self
 
@@ -1164,6 +1204,9 @@ class CapacityGovernancePostmortemRecord(BaseModel):
     quarantine_feedback_id: UUID | None = None
     restore_count: int = Field(default=0, ge=0)
     last_restored_at: datetime | None = None
+    last_certified_at: datetime | None = None
+    retired_at: datetime | None = None
+    retired_by: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1313,10 +1356,7 @@ class CapacityGovernanceKnowledgeQualityTrendPoint(BaseModel):
         self,
     ) -> CapacityGovernanceKnowledgeQualityTrendPoint:
         assessment_total = (
-            self.insufficient_count
-            + self.healthy_count
-            + self.degraded_count
-            + self.unsafe_count
+            self.insufficient_count + self.healthy_count + self.degraded_count + self.unsafe_count
         )
         if assessment_total != self.total_snapshots:
             raise ValueError("knowledge quality trend assessment counts must match total")
@@ -1850,8 +1890,7 @@ def build_persistent_unsafe_knowledge_incident_candidate(
     )
     if (
         not bounded
-        or bounded[-1].assessment
-        is not CapacityGovernanceKnowledgeQualityAssessment.UNSAFE
+        or bounded[-1].assessment is not CapacityGovernanceKnowledgeQualityAssessment.UNSAFE
     ):
         return None
     unsafe = tuple(
@@ -1888,8 +1927,7 @@ def build_repeated_degraded_knowledge_incident_candidate(
     )
     if (
         not bounded
-        or bounded[-1].assessment
-        is not CapacityGovernanceKnowledgeQualityAssessment.DEGRADED
+        or bounded[-1].assessment is not CapacityGovernanceKnowledgeQualityAssessment.DEGRADED
     ):
         return None
     degraded = tuple(

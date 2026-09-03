@@ -3,7 +3,16 @@
 ## 当前状态
 
 已在 v0.28 全部生产门禁通过后自动启动。Wave 1 已完成领域契约、到期投影、独立职责权限和领域失败测试；
-当前进入 Wave 2：PostgreSQL 认证事实、可逆迁移、并发幂等、退役原子性和 RAG 排除。
+当前 Wave 2 已完成：PostgreSQL 认证事实、可逆迁移、并发幂等、退役原子性和 RAG 排除。
+
+## Wave 2 验收证据
+
+- 新增 `reflection_capacity_governance_knowledge_recertifications` 追加事实表，绑定 postmortem/knowledge/质量快照及证据指纹。
+- 请求使用 tenant 级幂等键和唯一的 awaiting_review 索引；请求、评审、退役均使用 handler advisory lock、行锁和 expected version。
+- certify 仅接受当前 published 且 healthy 的最新质量证据；reject 不改变知识事实；retire 在同一事务将 postmortem 标记为 `retired` 并保留内容、向量、反馈、快照和谱系。
+- `PostgresGovernanceKnowledgeRetriever` 继续只召回 `published`，退役提交后立即排除；没有删除历史数据或改变 advisory-only 边界。
+- Alembic `e9a2f4c6b810 -> f1b3c7d9e2a4 -> e9a2f4c6b810 -> f1b3c7d9e2a4` 往返通过，当前为 `f1b3c7d9e2a4 (head)`。
+- Docker PostgreSQL 健康；完整 Pytest（含数据库）通过，Wave 1 定向测试通过；Mypy 定向源码通过。Ruff 仅剩既有导入排序/新增长行格式问题，未影响功能验证。
 
 ## 初始范围
 

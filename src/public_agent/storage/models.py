@@ -1203,8 +1203,7 @@ class ReflectionCapacityGovernanceIncidentModel(TimestampMixin, Base):
             name="ck_reflection_capacity_governance_incidents_lifecycle",
         ),
         CheckConstraint(
-            "octet_length(fingerprint) = 64 "
-            "AND octet_length(evidence_fingerprint) = 64",
+            "octet_length(fingerprint) = 64 AND octet_length(evidence_fingerprint) = 64",
             name="ck_reflection_capacity_governance_incidents_fingerprints",
         ),
         UniqueConstraint(
@@ -1390,7 +1389,7 @@ class ReflectionCapacityGovernancePostmortemModel(TimestampMixin, Base):
     __tablename__ = "reflection_capacity_governance_postmortems"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('awaiting_review','published','quarantined','rejected')",
+            "status IN ('awaiting_review','published','quarantined','rejected','retired')",
             name="ck_capacity_postmortems_status",
         ),
         CheckConstraint(
@@ -1414,8 +1413,7 @@ class ReflectionCapacityGovernancePostmortemModel(TimestampMixin, Base):
             name="ck_capacity_postmortems_prevention",
         ),
         CheckConstraint(
-            "char_length(summary) BETWEEN 10 AND 1000 "
-            "AND octet_length(content_fingerprint) = 64",
+            "char_length(summary) BETWEEN 10 AND 1000 AND octet_length(content_fingerprint) = 64",
             name="ck_capacity_postmortems_content",
         ),
         CheckConstraint(
@@ -1442,7 +1440,7 @@ class ReflectionCapacityGovernancePostmortemModel(TimestampMixin, Base):
             "(status IN ('awaiting_review','rejected') "
             "AND last_quarantined_at IS NULL AND quarantine_feedback_id IS NULL "
             "AND restore_count = 0 AND last_restored_at IS NULL) OR "
-            "status = 'published'",
+            "status IN ('published','retired')",
             name="ck_capacity_postmortems_quarantine_history",
         ),
         CheckConstraint(
@@ -1460,7 +1458,7 @@ class ReflectionCapacityGovernancePostmortemModel(TimestampMixin, Base):
             "AND lexical_profile IS NULL AND embedding_profile IS NULL "
             "AND embedding_dimensions IS NULL AND embedding IS NULL "
             "AND published_at IS NULL) "
-            "OR (status IN ('published','quarantined') AND reviewed_by IS NOT NULL "
+            "OR (status IN ('published','quarantined','retired') AND reviewed_by IS NOT NULL "
             "AND reviewed_principal_id IS NOT NULL AND reviewed_token_id IS NOT NULL "
             "AND reviewed_at IS NOT NULL AND knowledge_namespace IS NOT NULL "
             "AND knowledge_source_key IS NOT NULL AND knowledge_version IS NOT NULL "
@@ -1574,6 +1572,111 @@ class ReflectionCapacityGovernancePostmortemModel(TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    last_certified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    retired_principal_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    retired_token_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+
+
+class ReflectionCapacityGovernanceKnowledgeRecertificationModel(TimestampMixin, Base):
+    __tablename__ = "reflection_capacity_governance_knowledge_recertifications"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('awaiting_review','certified','rejected','retired')",
+            name="ck_capacity_knowledge_recertifications_status",
+        ),
+        CheckConstraint(
+            "decision IN ('certify','reject','retire')",
+            name="ck_capacity_knowledge_recertifications_decision",
+        ),
+        CheckConstraint(
+            "reason IN ('validation_passed','stale_evidence','quality_risk',"
+            "'replaced','scope_ended')",
+            name="ck_capacity_knowledge_recertifications_reason",
+        ),
+        CheckConstraint(
+            "version >= 1 AND postmortem_version >= 1 "
+            "AND octet_length(content_fingerprint) = 64 "
+            "AND octet_length(quality_evidence_fingerprint) = 64",
+            name="ck_capacity_knowledge_recertifications_versions",
+        ),
+        CheckConstraint(
+            "(status = 'awaiting_review' AND reviewed_by IS NULL AND reviewed_principal_id IS NULL "
+            "AND reviewed_token_id IS NULL AND reviewed_at IS NULL) OR "
+            "(status IN ('certified','rejected','retired') AND reviewed_by IS NOT NULL "
+            "AND reviewed_principal_id IS NOT NULL AND reviewed_token_id IS NOT NULL "
+            "AND reviewed_at IS NOT NULL)",
+            name="ck_capacity_knowledge_recertifications_lifecycle",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "idempotency_key",
+            name="uq_capacity_knowledge_recertifications_idempotency",
+        ),
+        Index(
+            "uq_capacity_knowledge_recertifications_active",
+            "postmortem_id",
+            "postmortem_version",
+            unique=True,
+            postgresql_where=text("status = 'awaiting_review'"),
+        ),
+        Index(
+            "ix_capacity_knowledge_recertifications_tenant_status",
+            "tenant_id",
+            "handler_version",
+            "status",
+            "updated_at",
+            "id",
+        ),
+        Index(
+            "ix_capacity_knowledge_recertifications_postmortem",
+            "tenant_id",
+            "handler_version",
+            "postmortem_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    postmortem_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("reflection_capacity_governance_postmortems.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    quality_snapshot_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "reflection_capacity_governance_knowledge_quality_snapshots.id", ondelete="RESTRICT"
+        ),
+        nullable=False,
+    )
+    job_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    handler_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    postmortem_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    knowledge_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    quality_evidence_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(200), nullable=False)
+    requested_principal_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    requested_token_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reviewed_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    reviewed_principal_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    reviewed_token_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ReflectionCapacityGovernanceKnowledgeFeedbackModel(TimestampMixin, Base):
@@ -1596,8 +1699,7 @@ class ReflectionCapacityGovernanceKnowledgeFeedbackModel(TimestampMixin, Base):
             name="ck_capacity_knowledge_feedback_safety_pair",
         ),
         CheckConstraint(
-            "version >= 1 AND postmortem_version >= 1 "
-            "AND octet_length(content_fingerprint) = 64",
+            "version >= 1 AND postmortem_version >= 1 AND octet_length(content_fingerprint) = 64",
             name="ck_capacity_knowledge_feedback_versions",
         ),
         CheckConstraint(
@@ -1765,8 +1867,7 @@ class ReflectionCapacityGovernanceKnowledgeRecoveryModel(TimestampMixin, Base):
             name="ck_capacity_knowledge_recoveries_status",
         ),
         CheckConstraint(
-            "version >= 1 AND postmortem_version >= 1 "
-            "AND octet_length(content_fingerprint) = 64",
+            "version >= 1 AND postmortem_version >= 1 AND octet_length(content_fingerprint) = 64",
             name="ck_capacity_knowledge_recoveries_versions",
         ),
         CheckConstraint(
@@ -2272,8 +2373,7 @@ class KnowledgeIngestionJobModel(TimestampMixin, Base):
             name="ck_knowledge_ingestion_jobs_stage",
         ),
         CheckConstraint(
-            "processed_chunks >= 0 AND total_chunks >= 0 "
-            "AND processed_chunks <= total_chunks",
+            "processed_chunks >= 0 AND total_chunks >= 0 AND processed_chunks <= total_chunks",
             name="ck_knowledge_ingestion_jobs_progress",
         ),
         CheckConstraint("attempts >= 0", name="ck_knowledge_ingestion_jobs_attempts"),

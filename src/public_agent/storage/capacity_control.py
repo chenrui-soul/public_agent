@@ -42,9 +42,13 @@ from public_agent.operations.capacity_control import (
     CAPACITY_KNOWLEDGE_FEEDBACK_REVIEW,
     CAPACITY_KNOWLEDGE_QUALITY_ASSESS,
     CAPACITY_KNOWLEDGE_QUALITY_READ,
+    CAPACITY_KNOWLEDGE_RECERTIFICATION_READ,
+    CAPACITY_KNOWLEDGE_RECERTIFICATION_REQUEST,
+    CAPACITY_KNOWLEDGE_RECERTIFICATION_REVIEW,
     CAPACITY_KNOWLEDGE_RECOVERY_READ,
     CAPACITY_KNOWLEDGE_RECOVERY_REQUEST,
     CAPACITY_KNOWLEDGE_RECOVERY_REVIEW,
+    CAPACITY_KNOWLEDGE_RETIREMENT,
     CAPACITY_POSTMORTEMS_READ,
     CAPACITY_POSTMORTEMS_REQUEST,
     CAPACITY_POSTMORTEMS_REVIEW,
@@ -96,6 +100,13 @@ from public_agent.operations.capacity_control import (
     CapacityGovernanceKnowledgeQualityTrendPoint,
     CapacityGovernanceKnowledgeQualityTrendQuery,
     CapacityGovernanceKnowledgeQualityTrendReport,
+    CapacityGovernanceKnowledgeRecertificationDecision,
+    CapacityGovernanceKnowledgeRecertificationInput,
+    CapacityGovernanceKnowledgeRecertificationPage,
+    CapacityGovernanceKnowledgeRecertificationQuery,
+    CapacityGovernanceKnowledgeRecertificationReason,
+    CapacityGovernanceKnowledgeRecertificationRecord,
+    CapacityGovernanceKnowledgeRecertificationStatus,
     CapacityGovernanceKnowledgeRecoveryPage,
     CapacityGovernanceKnowledgeRecoveryQuery,
     CapacityGovernanceKnowledgeRecoveryReason,
@@ -158,6 +169,7 @@ from public_agent.storage.models import (
     ReflectionCapacityGovernanceIncidentModel,
     ReflectionCapacityGovernanceKnowledgeFeedbackModel,
     ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel,
+    ReflectionCapacityGovernanceKnowledgeRecertificationModel,
     ReflectionCapacityGovernanceKnowledgeRecoveryModel,
     ReflectionCapacityGovernancePostmortemModel,
     ReflectionCapacityGovernanceRemediationModel,
@@ -200,10 +212,7 @@ class PostgresReflectionCapacityControl:
         if not drift_critical_observations <= drift_maximum_observations <= 100_000:
             raise ValueError("drift maximum observations must cover the critical threshold")
         if not (
-            60
-            <= alert_response_warning_seconds
-            <= alert_response_critical_seconds
-            <= 2_592_000
+            60 <= alert_response_warning_seconds <= alert_response_critical_seconds <= 2_592_000
         ):
             raise ValueError("alert response SLA thresholds must be ordered")
         self._sessions = sessions
@@ -217,30 +226,16 @@ class PostgresReflectionCapacityControl:
         self.drift_maximum_observations = drift_maximum_observations
         self.alert_response_warning_seconds = alert_response_warning_seconds
         self.alert_response_critical_seconds = alert_response_critical_seconds
-        self.incident_thresholds = (
-            incident_thresholds or CapacityGovernanceIncidentThresholds()
-        )
+        self.incident_thresholds = incident_thresholds or CapacityGovernanceIncidentThresholds()
         self.knowledge_quality_risk_thresholds = (
-            knowledge_quality_risk_thresholds
-            or CapacityGovernanceKnowledgeQualityRiskThresholds()
+            knowledge_quality_risk_thresholds or CapacityGovernanceKnowledgeQualityRiskThresholds()
         )
         if not 1 <= knowledge_quality_maximum_trend_buckets <= 3_660:
-            raise ValueError(
-                "knowledge quality maximum trend buckets must be between 1 and 3660"
-            )
-        self.knowledge_quality_maximum_trend_buckets = (
-            knowledge_quality_maximum_trend_buckets
-        )
-        self._governance_embeddings = (
-            governance_embeddings or DeterministicHashEmbeddingProvider()
-        )
-        if (
-            self._governance_embeddings.profile.dimensions
-            != KNOWLEDGE_EMBEDDING_DIMENSIONS
-        ):
-            raise ValueError(
-                "governance knowledge embeddings must match PostgreSQL dimensions"
-            )
+            raise ValueError("knowledge quality maximum trend buckets must be between 1 and 3660")
+        self.knowledge_quality_maximum_trend_buckets = knowledge_quality_maximum_trend_buckets
+        self._governance_embeddings = governance_embeddings or DeterministicHashEmbeddingProvider()
+        if self._governance_embeddings.profile.dimensions != KNOWLEDGE_EMBEDDING_DIMENSIONS:
+            raise ValueError("governance knowledge embeddings must match PostgreSQL dimensions")
         self._governance_segmenter = governance_segmenter or JiebaChineseSegmenter()
 
     async def list_roles(
@@ -301,12 +296,16 @@ class PostgresReflectionCapacityControl:
                 actor=actor,
                 permission=CAPACITY_GOVERNANCE_READ,
             )
-            after = _decode_cursor(
-                query.cursor,
-                kind="request",
-                filters={"status": query.status.value if query.status else None},
-                scope_hash=self._scope_hash(scope),
-            ) if query.cursor else None
+            after = (
+                _decode_cursor(
+                    query.cursor,
+                    kind="request",
+                    filters={"status": query.status.value if query.status else None},
+                    scope_hash=self._scope_hash(scope),
+                )
+                if query.cursor
+                else None
+            )
             filters = self._request_scope()
             if query.status is not None:
                 filters.append(ReflectionCapacityChangeRequestModel.status == query.status.value)
@@ -522,12 +521,16 @@ class PostgresReflectionCapacityControl:
                 "severity": query.severity.value if query.severity else None,
                 "status": query.status.value if query.status else None,
             }
-            after = _decode_cursor(
-                query.cursor,
-                kind="alert",
-                filters=cursor_filters,
-                scope_hash=self._scope_hash(scope),
-            ) if query.cursor else None
+            after = (
+                _decode_cursor(
+                    query.cursor,
+                    kind="alert",
+                    filters=cursor_filters,
+                    scope_hash=self._scope_hash(scope),
+                )
+                if query.cursor
+                else None
+            )
             filters = self._alert_scope()
             if query.status is not None:
                 filters.append(ReflectionCapacityGovernanceAlertModel.status == query.status.value)
@@ -605,29 +608,23 @@ class PostgresReflectionCapacityControl:
             )
             filters: list[ColumnElement[bool]] = [
                 ReflectionCapacityGovernanceAuditEventModel.tenant_id == scope.tenant_id,
-                ReflectionCapacityGovernanceAuditEventModel.handler_version
-                == self.handler_version,
+                ReflectionCapacityGovernanceAuditEventModel.handler_version == self.handler_version,
             ]
             if query.actor_subject is not None:
                 filters.append(APIPrincipalModel.subject == query.actor_subject)
             if query.action is not None:
-                filters.append(
-                    ReflectionCapacityGovernanceAuditEventModel.action == query.action
-                )
+                filters.append(ReflectionCapacityGovernanceAuditEventModel.action == query.action)
             if query.outcome is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceAuditEventModel.outcome
-                    == query.outcome.value
+                    ReflectionCapacityGovernanceAuditEventModel.outcome == query.outcome.value
                 )
             if query.occurred_from is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceAuditEventModel.created_at
-                    >= query.occurred_from
+                    ReflectionCapacityGovernanceAuditEventModel.created_at >= query.occurred_from
                 )
             if query.occurred_to is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceAuditEventModel.created_at
-                    <= query.occurred_to
+                    ReflectionCapacityGovernanceAuditEventModel.created_at <= query.occurred_to
                 )
             if after is not None:
                 created_at, item_id = after
@@ -635,8 +632,7 @@ class PostgresReflectionCapacityControl:
                     or_(
                         ReflectionCapacityGovernanceAuditEventModel.created_at < created_at,
                         and_(
-                            ReflectionCapacityGovernanceAuditEventModel.created_at
-                            == created_at,
+                            ReflectionCapacityGovernanceAuditEventModel.created_at == created_at,
                             ReflectionCapacityGovernanceAuditEventModel.id < item_id,
                         ),
                     )
@@ -708,28 +704,23 @@ class PostgresReflectionCapacityControl:
             filters = self._incident_scope(scope.tenant_id)
             if query.signal is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceIncidentModel.signal
-                    == query.signal.value
+                    ReflectionCapacityGovernanceIncidentModel.signal == query.signal.value
                 )
             if query.severity is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceIncidentModel.severity
-                    == query.severity.value
+                    ReflectionCapacityGovernanceIncidentModel.severity == query.severity.value
                 )
             if query.status is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceIncidentModel.status
-                    == query.status.value
+                    ReflectionCapacityGovernanceIncidentModel.status == query.status.value
                 )
             if after is not None:
                 updated_at, item_id = after
                 filters.append(
                     or_(
-                        ReflectionCapacityGovernanceIncidentModel.updated_at
-                        < updated_at,
+                        ReflectionCapacityGovernanceIncidentModel.updated_at < updated_at,
                         and_(
-                            ReflectionCapacityGovernanceIncidentModel.updated_at
-                            == updated_at,
+                            ReflectionCapacityGovernanceIncidentModel.updated_at == updated_at,
                             ReflectionCapacityGovernanceIncidentModel.id < item_id,
                         ),
                     )
@@ -883,23 +874,19 @@ class PostgresReflectionCapacityControl:
             filters = self._remediation_scope(scope.tenant_id)
             if query.status is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceRemediationModel.status
-                    == query.status.value
+                    ReflectionCapacityGovernanceRemediationModel.status == query.status.value
                 )
             if query.incident_id is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceRemediationModel.incident_id
-                    == query.incident_id
+                    ReflectionCapacityGovernanceRemediationModel.incident_id == query.incident_id
                 )
             if after is not None:
                 updated_at, item_id = after
                 filters.append(
                     or_(
-                        ReflectionCapacityGovernanceRemediationModel.updated_at
-                        < updated_at,
+                        ReflectionCapacityGovernanceRemediationModel.updated_at < updated_at,
                         and_(
-                            ReflectionCapacityGovernanceRemediationModel.updated_at
-                            == updated_at,
+                            ReflectionCapacityGovernanceRemediationModel.updated_at == updated_at,
                             ReflectionCapacityGovernanceRemediationModel.id < item_id,
                         ),
                     )
@@ -971,9 +958,7 @@ class PostgresReflectionCapacityControl:
                     permission=CAPACITY_REMEDIATIONS_REQUEST,
                     for_update=True,
                 )
-                await session.execute(
-                    select(func.pg_advisory_xact_lock(self._incident_lock_id()))
-                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
                 incident = await session.scalar(
                     select(ReflectionCapacityGovernanceIncidentModel)
                     .where(
@@ -986,8 +971,7 @@ class PostgresReflectionCapacityControl:
                     raise KeyError("Unknown capacity governance incident")
                 if (
                     incident.version != expected_incident_version
-                    or incident.status
-                    != CapacityGovernanceIncidentStatus.ACKNOWLEDGED.value
+                    or incident.status != CapacityGovernanceIncidentStatus.ACKNOWLEDGED.value
                 ):
                     raise ReflectionCapacityGovernanceConflictError(
                         "Incident must be acknowledged at the expected version"
@@ -999,8 +983,7 @@ class PostgresReflectionCapacityControl:
                     raise ValueError("playbook does not match the incident signal")
                 existing = await session.scalar(
                     select(ReflectionCapacityGovernanceRemediationModel.id).where(
-                        ReflectionCapacityGovernanceRemediationModel.incident_id
-                        == incident.id,
+                        ReflectionCapacityGovernanceRemediationModel.incident_id == incident.id,
                         ReflectionCapacityGovernanceRemediationModel.incident_cycle
                         == incident.reopened_count,
                     )
@@ -1095,8 +1078,7 @@ class PostgresReflectionCapacityControl:
                 row = await session.scalar(
                     select(ReflectionCapacityGovernanceRemediationModel)
                     .where(
-                        ReflectionCapacityGovernanceRemediationModel.id
-                        == remediation_id,
+                        ReflectionCapacityGovernanceRemediationModel.id == remediation_id,
                         *self._remediation_scope(authorized.tenant_id),
                     )
                     .with_for_update()
@@ -1105,8 +1087,7 @@ class PostgresReflectionCapacityControl:
                     raise KeyError("Unknown capacity governance remediation")
                 if (
                     row.version != expected_version
-                    or row.status
-                    != CapacityGovernanceRemediationStatus.AWAITING_APPROVAL.value
+                    or row.status != CapacityGovernanceRemediationStatus.AWAITING_APPROVAL.value
                 ):
                     raise ReflectionCapacityGovernanceConflictError(
                         "Remediation changed before approval decision"
@@ -1169,8 +1150,7 @@ class PostgresReflectionCapacityControl:
                 row = await session.scalar(
                     select(ReflectionCapacityGovernanceRemediationModel)
                     .where(
-                        ReflectionCapacityGovernanceRemediationModel.id
-                        == remediation_id,
+                        ReflectionCapacityGovernanceRemediationModel.id == remediation_id,
                         *self._remediation_scope(authorized.tenant_id),
                     )
                     .with_for_update()
@@ -1255,8 +1235,7 @@ class PostgresReflectionCapacityControl:
                 row = await session.scalar(
                     select(ReflectionCapacityGovernanceRemediationModel)
                     .where(
-                        ReflectionCapacityGovernanceRemediationModel.id
-                        == remediation_id,
+                        ReflectionCapacityGovernanceRemediationModel.id == remediation_id,
                         *self._remediation_scope(authorized.tenant_id),
                     )
                     .with_for_update()
@@ -1265,8 +1244,7 @@ class PostgresReflectionCapacityControl:
                     raise KeyError("Unknown capacity governance remediation")
                 if (
                     row.version != expected_version
-                    or row.status
-                    != CapacityGovernanceRemediationStatus.VERIFICATION_PENDING.value
+                    or row.status != CapacityGovernanceRemediationStatus.VERIFICATION_PENDING.value
                 ):
                     raise ReflectionCapacityGovernanceConflictError(
                         "Remediation changed before verification"
@@ -1347,13 +1325,11 @@ class PostgresReflectionCapacityControl:
             filters = self._postmortem_scope(scope.tenant_id)
             if query.status is not None:
                 filters.append(
-                    ReflectionCapacityGovernancePostmortemModel.status
-                    == query.status.value
+                    ReflectionCapacityGovernancePostmortemModel.status == query.status.value
                 )
             if query.incident_id is not None:
                 filters.append(
-                    ReflectionCapacityGovernancePostmortemModel.incident_id
-                    == query.incident_id
+                    ReflectionCapacityGovernancePostmortemModel.incident_id == query.incident_id
                 )
             if query.remediation_id is not None:
                 filters.append(
@@ -1364,11 +1340,9 @@ class PostgresReflectionCapacityControl:
                 updated_at, item_id = after
                 filters.append(
                     or_(
-                        ReflectionCapacityGovernancePostmortemModel.updated_at
-                        < updated_at,
+                        ReflectionCapacityGovernancePostmortemModel.updated_at < updated_at,
                         and_(
-                            ReflectionCapacityGovernancePostmortemModel.updated_at
-                            == updated_at,
+                            ReflectionCapacityGovernancePostmortemModel.updated_at == updated_at,
                             ReflectionCapacityGovernancePostmortemModel.id < item_id,
                         ),
                     )
@@ -1440,14 +1414,11 @@ class PostgresReflectionCapacityControl:
                     permission=CAPACITY_POSTMORTEMS_REQUEST,
                     for_update=True,
                 )
-                await session.execute(
-                    select(func.pg_advisory_xact_lock(self._incident_lock_id()))
-                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
                 remediation = await session.scalar(
                     select(ReflectionCapacityGovernanceRemediationModel)
                     .where(
-                        ReflectionCapacityGovernanceRemediationModel.id
-                        == remediation_id,
+                        ReflectionCapacityGovernanceRemediationModel.id == remediation_id,
                         *self._remediation_scope(authorized.tenant_id),
                     )
                     .with_for_update()
@@ -1456,8 +1427,7 @@ class PostgresReflectionCapacityControl:
                     raise KeyError("Unknown capacity governance remediation")
                 if (
                     remediation.version != expected_remediation_version
-                    or remediation.status
-                    != CapacityGovernanceRemediationStatus.VERIFIED.value
+                    or remediation.status != CapacityGovernanceRemediationStatus.VERIFIED.value
                 ):
                     raise ReflectionCapacityGovernanceConflictError(
                         "Postmortems require a verified remediation at the expected version"
@@ -1465,8 +1435,7 @@ class PostgresReflectionCapacityControl:
                 incident = await session.scalar(
                     select(ReflectionCapacityGovernanceIncidentModel)
                     .where(
-                        ReflectionCapacityGovernanceIncidentModel.id
-                        == remediation.incident_id,
+                        ReflectionCapacityGovernanceIncidentModel.id == remediation.incident_id,
                         *self._incident_scope(authorized.tenant_id),
                     )
                     .with_for_update()
@@ -1578,13 +1547,10 @@ class PostgresReflectionCapacityControl:
                     expected_version=expected_version,
                     for_update=False,
                 )
-                knowledge_content = render_postmortem_knowledge_content(
-                    _postmortem_record(row)
-                )
+                knowledge_content = render_postmortem_knowledge_content(_postmortem_record(row))
             embedding = await self._governance_embeddings.embed(knowledge_content)
-            if (
-                len(embedding) != KNOWLEDGE_EMBEDDING_DIMENSIONS
-                or not all(math.isfinite(value) for value in embedding)
+            if len(embedding) != KNOWLEDGE_EMBEDDING_DIMENSIONS or not all(
+                math.isfinite(value) for value in embedding
             ):
                 raise ValueError("governance knowledge embedding is invalid")
             indexed_text = lexical_text(self._governance_segmenter, knowledge_content)
@@ -1739,13 +1705,11 @@ class PostgresReflectionCapacityControl:
             filters = self._knowledge_feedback_scope(scope.tenant_id)
             if query.status is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceKnowledgeFeedbackModel.status
-                    == query.status.value
+                    ReflectionCapacityGovernanceKnowledgeFeedbackModel.status == query.status.value
                 )
             if query.signal is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceKnowledgeFeedbackModel.signal
-                    == query.signal.value
+                    ReflectionCapacityGovernanceKnowledgeFeedbackModel.signal == query.signal.value
                 )
             if query.postmortem_id is not None:
                 filters.append(
@@ -1756,8 +1720,7 @@ class PostgresReflectionCapacityControl:
                 updated_at, item_id = after
                 filters.append(
                     or_(
-                        ReflectionCapacityGovernanceKnowledgeFeedbackModel.updated_at
-                        < updated_at,
+                        ReflectionCapacityGovernanceKnowledgeFeedbackModel.updated_at < updated_at,
                         and_(
                             ReflectionCapacityGovernanceKnowledgeFeedbackModel.updated_at
                             == updated_at,
@@ -1818,9 +1781,7 @@ class PostgresReflectionCapacityControl:
                     permission=CAPACITY_KNOWLEDGE_FEEDBACK_REPORT,
                     for_update=True,
                 )
-                await session.execute(
-                    select(func.pg_advisory_xact_lock(self._incident_lock_id()))
-                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
                 postmortem = await session.scalar(
                     select(ReflectionCapacityGovernancePostmortemModel)
                     .where(
@@ -1832,8 +1793,7 @@ class PostgresReflectionCapacityControl:
                 if postmortem is None:
                     raise KeyError("Unknown capacity governance postmortem")
                 if (
-                    postmortem.status
-                    != CapacityGovernancePostmortemStatus.PUBLISHED.value
+                    postmortem.status != CapacityGovernancePostmortemStatus.PUBLISHED.value
                     or postmortem.version != expected_postmortem_version
                     or postmortem.knowledge_version != normalized_knowledge_version
                     or postmortem.content_fingerprint != normalized_fingerprint
@@ -1947,14 +1907,11 @@ class PostgresReflectionCapacityControl:
                     permission=CAPACITY_KNOWLEDGE_FEEDBACK_REVIEW,
                     for_update=True,
                 )
-                await session.execute(
-                    select(func.pg_advisory_xact_lock(self._incident_lock_id()))
-                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
                 row = await session.scalar(
                     select(ReflectionCapacityGovernanceKnowledgeFeedbackModel)
                     .where(
-                        ReflectionCapacityGovernanceKnowledgeFeedbackModel.id
-                        == feedback_id,
+                        ReflectionCapacityGovernanceKnowledgeFeedbackModel.id == feedback_id,
                         *self._knowledge_feedback_scope(authorized.tenant_id),
                     )
                     .with_for_update()
@@ -1963,8 +1920,7 @@ class PostgresReflectionCapacityControl:
                     raise KeyError("Unknown capacity governance knowledge feedback")
                 if (
                     row.version != expected_version
-                    or row.status
-                    != CapacityGovernanceKnowledgeFeedbackStatus.AWAITING_REVIEW.value
+                    or row.status != CapacityGovernanceKnowledgeFeedbackStatus.AWAITING_REVIEW.value
                 ):
                     raise ReflectionCapacityGovernanceConflictError(
                         "Knowledge feedback changed before review"
@@ -1976,16 +1932,14 @@ class PostgresReflectionCapacityControl:
                 postmortem = await session.scalar(
                     select(ReflectionCapacityGovernancePostmortemModel)
                     .where(
-                        ReflectionCapacityGovernancePostmortemModel.id
-                        == row.postmortem_id,
+                        ReflectionCapacityGovernancePostmortemModel.id == row.postmortem_id,
                         *self._postmortem_scope(authorized.tenant_id),
                     )
                     .with_for_update()
                 )
                 if (
                     postmortem is None
-                    or postmortem.status
-                    != CapacityGovernancePostmortemStatus.PUBLISHED.value
+                    or postmortem.status != CapacityGovernancePostmortemStatus.PUBLISHED.value
                     or postmortem.version != row.postmortem_version
                     or postmortem.knowledge_version != row.knowledge_version
                     or postmortem.content_fingerprint != row.content_fingerprint
@@ -2007,8 +1961,7 @@ class PostgresReflectionCapacityControl:
                 row.updated_at = now
                 if (
                     confirm
-                    and row.signal
-                    == CapacityGovernanceKnowledgeFeedbackSignal.SAFETY_CONCERN.value
+                    and row.signal == CapacityGovernanceKnowledgeFeedbackSignal.SAFETY_CONCERN.value
                 ):
                     postmortem.status = CapacityGovernancePostmortemStatus.QUARANTINED.value
                     postmortem.last_quarantined_at = now
@@ -2019,8 +1972,7 @@ class PostgresReflectionCapacityControl:
                         await session.scalars(
                             update(ReflectionCapacityGovernanceKnowledgeFeedbackModel)
                             .where(
-                                ReflectionCapacityGovernanceKnowledgeFeedbackModel.id
-                                != row.id,
+                                ReflectionCapacityGovernanceKnowledgeFeedbackModel.id != row.id,
                                 ReflectionCapacityGovernanceKnowledgeFeedbackModel.postmortem_id
                                 == row.postmortem_id,
                                 ReflectionCapacityGovernanceKnowledgeFeedbackModel.postmortem_version
@@ -2030,18 +1982,13 @@ class PostgresReflectionCapacityControl:
                                 *self._knowledge_feedback_scope(authorized.tenant_id),
                             )
                             .values(
-                                status=(
-                                    CapacityGovernanceKnowledgeFeedbackStatus.SUPERSEDED.value
-                                ),
+                                status=(CapacityGovernanceKnowledgeFeedbackStatus.SUPERSEDED.value),
                                 version=(
-                                    ReflectionCapacityGovernanceKnowledgeFeedbackModel.version
-                                    + 1
+                                    ReflectionCapacityGovernanceKnowledgeFeedbackModel.version + 1
                                 ),
                                 updated_at=now,
                             )
-                            .returning(
-                                ReflectionCapacityGovernanceKnowledgeFeedbackModel.id
-                            )
+                            .returning(ReflectionCapacityGovernanceKnowledgeFeedbackModel.id)
                         )
                     )
                     superseded_feedback = len(superseded_ids)
@@ -2114,8 +2061,7 @@ class PostgresReflectionCapacityControl:
                         and_(
                             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.captured_at
                             == captured_at,
-                            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id
-                            < item_id,
+                            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id < item_id,
                         ),
                     )
                 )
@@ -2176,9 +2122,7 @@ class PostgresReflectionCapacityControl:
             )
             if after is not None:
                 after_bucket, _ = after
-                bucket_starts = tuple(
-                    bucket for bucket in bucket_starts if bucket < after_bucket
-                )
+                bucket_starts = tuple(bucket for bucket in bucket_starts if bucket < after_bucket)
             page_bucket_starts = bucket_starts[: query.limit]
             bucket_expr = func.date_trunc(
                 query.bucket.value,
@@ -2205,33 +2149,25 @@ class PostgresReflectionCapacityControl:
                         func.count(
                             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id
                         ).label("total_snapshots"),
-                        func.count(
-                            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id
-                        )
+                        func.count(ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id)
                         .filter(
                             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.assessment
                             == CapacityGovernanceKnowledgeQualityAssessment.INSUFFICIENT.value
                         )
                         .label("insufficient_count"),
-                        func.count(
-                            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id
-                        )
+                        func.count(ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id)
                         .filter(
                             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.assessment
                             == CapacityGovernanceKnowledgeQualityAssessment.HEALTHY.value
                         )
                         .label("healthy_count"),
-                        func.count(
-                            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id
-                        )
+                        func.count(ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id)
                         .filter(
                             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.assessment
                             == CapacityGovernanceKnowledgeQualityAssessment.DEGRADED.value
                         )
                         .label("degraded_count"),
-                        func.count(
-                            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id
-                        )
+                        func.count(ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id)
                         .filter(
                             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.assessment
                             == CapacityGovernanceKnowledgeQualityAssessment.UNSAFE.value
@@ -2262,9 +2198,7 @@ class PostgresReflectionCapacityControl:
                     else 0
                 ),
                 healthy_count=(
-                    int(aggregated[bucket_start].healthy_count)
-                    if bucket_start in aggregated
-                    else 0
+                    int(aggregated[bucket_start].healthy_count) if bucket_start in aggregated else 0
                 ),
                 degraded_count=(
                     int(aggregated[bucket_start].degraded_count)
@@ -2272,9 +2206,7 @@ class PostgresReflectionCapacityControl:
                     else 0
                 ),
                 unsafe_count=(
-                    int(aggregated[bucket_start].unsafe_count)
-                    if bucket_start in aggregated
-                    else 0
+                    int(aggregated[bucket_start].unsafe_count) if bucket_start in aggregated else 0
                 ),
                 distinct_postmortems=(
                     int(aggregated[bucket_start].distinct_postmortems)
@@ -2322,9 +2254,7 @@ class PostgresReflectionCapacityControl:
                     permission=CAPACITY_KNOWLEDGE_QUALITY_ASSESS,
                     for_update=True,
                 )
-                await session.execute(
-                    select(func.pg_advisory_xact_lock(self._incident_lock_id()))
-                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
                 postmortem = await session.scalar(
                     select(ReflectionCapacityGovernancePostmortemModel)
                     .where(
@@ -2379,9 +2309,7 @@ class PostgresReflectionCapacityControl:
                     total_feedback=evidence["total_feedback"],
                     awaiting_review_count=evidence["awaiting_review_count"],
                     confirmed_helpful_count=evidence["confirmed_helpful_count"],
-                    confirmed_not_helpful_count=evidence[
-                        "confirmed_not_helpful_count"
-                    ],
+                    confirmed_not_helpful_count=evidence["confirmed_not_helpful_count"],
                     confirmed_safety_count=evidence["confirmed_safety_count"],
                     dismissed_count=evidence["dismissed_count"],
                     superseded_count=evidence["superseded_count"],
@@ -2415,6 +2343,387 @@ class PostgresReflectionCapacityControl:
             )
             raise
 
+    async def list_knowledge_recertifications(
+        self,
+        query: CapacityGovernanceKnowledgeRecertificationQuery,
+        *,
+        actor: AuthenticatedPrincipal,
+    ) -> CapacityGovernanceKnowledgeRecertificationPage:
+        async with self._sessions() as session, session.begin():
+            scope = await self._authorize(
+                session, actor=actor, permission=CAPACITY_KNOWLEDGE_RECERTIFICATION_READ
+            )
+            filters = self._knowledge_recertification_scope(scope.tenant_id)
+            if query.status is not None:
+                filters.append(
+                    ReflectionCapacityGovernanceKnowledgeRecertificationModel.status
+                    == query.status.value
+                )
+            if query.postmortem_id is not None:
+                filters.append(
+                    ReflectionCapacityGovernanceKnowledgeRecertificationModel.postmortem_id
+                    == query.postmortem_id
+                )
+            after = None
+            if query.cursor:
+                after = _decode_cursor(
+                    query.cursor,
+                    kind="knowledge_recertification",
+                    filters={
+                        "status": query.status.value if query.status else None,
+                        "postmortem_id": str(query.postmortem_id) if query.postmortem_id else None,
+                    },
+                    scope_hash=self._scope_hash(scope),
+                )
+            if after:
+                updated_at, item_id = after
+                filters.append(
+                    or_(
+                        ReflectionCapacityGovernanceKnowledgeRecertificationModel.updated_at
+                        < updated_at,
+                        and_(
+                            ReflectionCapacityGovernanceKnowledgeRecertificationModel.updated_at
+                            == updated_at,
+                            ReflectionCapacityGovernanceKnowledgeRecertificationModel.id < item_id,
+                        ),
+                    )
+                )
+            rows = tuple(
+                await session.scalars(
+                    select(ReflectionCapacityGovernanceKnowledgeRecertificationModel)
+                    .where(*filters)
+                    .order_by(
+                        ReflectionCapacityGovernanceKnowledgeRecertificationModel.updated_at.desc(),
+                        ReflectionCapacityGovernanceKnowledgeRecertificationModel.id.desc(),
+                    )
+                    .limit(query.limit + 1)
+                )
+            )
+        page_rows = rows[: query.limit]
+        cursor_filters = {
+            "status": query.status.value if query.status else None,
+            "postmortem_id": str(query.postmortem_id) if query.postmortem_id else None,
+        }
+        return CapacityGovernanceKnowledgeRecertificationPage(
+            items=tuple(_knowledge_recertification_record(row) for row in page_rows),
+            next_cursor=(
+                _encode_cursor(
+                    kind="knowledge_recertification",
+                    updated_at=page_rows[-1].updated_at,
+                    item_id=page_rows[-1].id,
+                    filters=cursor_filters,
+                    scope_hash=self._scope_hash(scope),
+                )
+                if len(rows) > query.limit and page_rows
+                else None
+            ),
+        )
+
+    async def request_knowledge_recertification(
+        self,
+        *,
+        content: CapacityGovernanceKnowledgeRecertificationInput,
+        actor: AuthenticatedPrincipal,
+        idempotency_key: str | None = None,
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord:
+        key = (
+            idempotency_key
+            or hashlib.sha256(
+                f"{content.postmortem_id}:{content.expected_postmortem_version}:"
+                f"{content.quality_snapshot_id}:{content.quality_evidence_fingerprint}:"
+                f"{content.decision.value}:{content.reason.value}".encode()
+            ).hexdigest()
+        ).strip()
+        if not 1 <= len(key) <= 200:
+            raise ValueError("idempotency_key must contain 1 to 200 characters")
+        try:
+            async with self._sessions() as session, session.begin():
+                authorized = await self._authorize(
+                    session,
+                    actor=actor,
+                    permission=CAPACITY_KNOWLEDGE_RECERTIFICATION_REQUEST,
+                    for_update=True,
+                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
+                existing = await session.scalar(
+                    select(ReflectionCapacityGovernanceKnowledgeRecertificationModel)
+                    .where(
+                        ReflectionCapacityGovernanceKnowledgeRecertificationModel.tenant_id
+                        == authorized.tenant_id,
+                        ReflectionCapacityGovernanceKnowledgeRecertificationModel.idempotency_key
+                        == key,
+                    )
+                    .with_for_update()
+                )
+                if existing is not None:
+                    if (
+                        existing.postmortem_id != content.postmortem_id
+                        or existing.postmortem_version != content.expected_postmortem_version
+                        or existing.decision != content.decision.value
+                        or existing.reason != content.reason.value
+                    ):
+                        raise ReflectionCapacityGovernanceConflictError(
+                            "recertification idempotency key reused"
+                        )
+                    return _knowledge_recertification_record(existing)
+                postmortem = await session.scalar(
+                    select(ReflectionCapacityGovernancePostmortemModel)
+                    .where(
+                        ReflectionCapacityGovernancePostmortemModel.id == content.postmortem_id,
+                        *self._postmortem_scope(authorized.tenant_id),
+                    )
+                    .with_for_update()
+                )
+                if postmortem is None:
+                    raise KeyError("Unknown capacity governance postmortem")
+                if (
+                    postmortem.status != CapacityGovernancePostmortemStatus.PUBLISHED.value
+                    or postmortem.version != content.expected_postmortem_version
+                    or postmortem.knowledge_version != content.knowledge_version
+                    or postmortem.content_fingerprint != content.content_fingerprint
+                ):
+                    raise ReflectionCapacityGovernanceConflictError(
+                        "recertification source is stale"
+                    )
+                snapshot = await session.scalar(
+                    select(ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel).where(
+                        ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id
+                        == content.quality_snapshot_id,
+                        *self._knowledge_quality_scope(authorized.tenant_id),
+                    )
+                )
+                evidence = await self._knowledge_quality_evidence(session, postmortem=postmortem)
+                if (
+                    snapshot is None
+                    or snapshot.postmortem_id != postmortem.id
+                    or snapshot.postmortem_version != postmortem.version
+                    or snapshot.knowledge_version != postmortem.knowledge_version
+                    or snapshot.content_fingerprint != postmortem.content_fingerprint
+                    or snapshot.evidence_fingerprint != content.quality_evidence_fingerprint
+                    or evidence["fingerprint"] != content.quality_evidence_fingerprint
+                ):
+                    raise ReflectionCapacityGovernanceConflictError(
+                        "recertification quality evidence is stale"
+                    )
+                now = utc_now()
+                row = ReflectionCapacityGovernanceKnowledgeRecertificationModel(
+                    id=uuid4(),
+                    tenant_id=authorized.tenant_id,
+                    postmortem_id=postmortem.id,
+                    quality_snapshot_id=snapshot.id,
+                    job_type=REFLECTION_JOB_TYPE,
+                    handler_version=self.handler_version,
+                    postmortem_version=postmortem.version,
+                    knowledge_version=postmortem.knowledge_version,
+                    content_fingerprint=postmortem.content_fingerprint,
+                    quality_evidence_fingerprint=snapshot.evidence_fingerprint,
+                    decision=content.decision.value,
+                    reason=content.reason.value,
+                    status=CapacityGovernanceKnowledgeRecertificationStatus.AWAITING_REVIEW.value,
+                    version=1,
+                    idempotency_key=key,
+                    requested_by=authorized.subject,
+                    requested_principal_id=authorized.principal_id,
+                    requested_token_id=authorized.token_id,
+                    requested_at=now,
+                )
+                session.add(row)
+                await session.flush()
+                self._append_audit(
+                    session,
+                    authorized=authorized,
+                    action="capacity.knowledge_recertification.request",
+                    outcome=CapacityGovernanceAuditOutcome.SUCCESS,
+                    incident_id=postmortem.incident_id,
+                    postmortem_id=postmortem.id,
+                    metadata={"knowledge_recertification_status": row.status},
+                )
+            return _knowledge_recertification_record(row)
+        except Exception as exc:
+            await self._audit_failure(
+                actor=actor,
+                action="capacity.knowledge_recertification.request",
+                exc=exc,
+                postmortem_id=content.postmortem_id,
+            )
+            raise
+
+    async def review_knowledge_recertification(
+        self,
+        *,
+        recertification_id: UUID,
+        expected_version: int,
+        actor: AuthenticatedPrincipal,
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord:
+        if expected_version < 1:
+            raise ValueError("expected_version must be positive")
+        try:
+            async with self._sessions() as session, session.begin():
+                authorized = await self._authorize(
+                    session,
+                    actor=actor,
+                    permission=CAPACITY_KNOWLEDGE_RECERTIFICATION_READ,
+                    for_update=True,
+                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
+                row = await session.scalar(
+                    select(ReflectionCapacityGovernanceKnowledgeRecertificationModel)
+                    .where(
+                        ReflectionCapacityGovernanceKnowledgeRecertificationModel.id
+                        == recertification_id,
+                        *self._knowledge_recertification_scope(authorized.tenant_id),
+                    )
+                    .with_for_update()
+                )
+                if row is None:
+                    raise KeyError("Unknown governance knowledge recertification")
+                await self._authorize(
+                    session,
+                    actor=actor,
+                    permission=(
+                        CAPACITY_KNOWLEDGE_RETIREMENT
+                        if row.decision
+                        == CapacityGovernanceKnowledgeRecertificationDecision.RETIRE.value
+                        else CAPACITY_KNOWLEDGE_RECERTIFICATION_REVIEW
+                    ),
+                )
+                if (
+                    row.version != expected_version
+                    or row.status
+                    != CapacityGovernanceKnowledgeRecertificationStatus.AWAITING_REVIEW.value
+                ):
+                    raise ReflectionCapacityGovernanceConflictError(
+                        "recertification changed before review"
+                    )
+                if row.requested_principal_id == authorized.principal_id:
+                    raise CapacityGovernanceAuthorizationError(
+                        "recertification requester cannot review the same request"
+                    )
+                postmortem = await session.scalar(
+                    select(ReflectionCapacityGovernancePostmortemModel)
+                    .where(
+                        ReflectionCapacityGovernancePostmortemModel.id == row.postmortem_id,
+                        *self._postmortem_scope(authorized.tenant_id),
+                    )
+                    .with_for_update()
+                )
+                if (
+                    postmortem is None
+                    or postmortem.version != row.postmortem_version
+                    or postmortem.content_fingerprint != row.content_fingerprint
+                ):
+                    raise ReflectionCapacityGovernanceConflictError(
+                        "recertification source changed before review"
+                    )
+                snapshot = await session.scalar(
+                    select(ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel).where(
+                        ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.id
+                        == row.quality_snapshot_id,
+                        *self._knowledge_quality_scope(authorized.tenant_id),
+                    )
+                )
+                evidence = await self._knowledge_quality_evidence(session, postmortem=postmortem)
+                if (
+                    snapshot is None
+                    or snapshot.evidence_fingerprint != row.quality_evidence_fingerprint
+                    or evidence["fingerprint"] != row.quality_evidence_fingerprint
+                ):
+                    raise ReflectionCapacityGovernanceConflictError(
+                        "recertification evidence changed before review"
+                    )
+                if row.decision == CapacityGovernanceKnowledgeRecertificationDecision.CERTIFY.value:
+                    if (
+                        postmortem.status != CapacityGovernancePostmortemStatus.PUBLISHED.value
+                        or snapshot.assessment
+                        != CapacityGovernanceKnowledgeQualityAssessment.HEALTHY.value
+                    ):
+                        raise ReflectionCapacityGovernanceConflictError(
+                            "certification requires current healthy quality evidence"
+                        )
+                    postmortem.last_certified_at = utc_now()
+                    postmortem.version += 1
+                    postmortem.updated_at = postmortem.last_certified_at
+                    row.status = CapacityGovernanceKnowledgeRecertificationStatus.CERTIFIED.value
+                elif (
+                    row.decision == CapacityGovernanceKnowledgeRecertificationDecision.RETIRE.value
+                ):
+                    await self._authorize(
+                        session, actor=actor, permission=CAPACITY_KNOWLEDGE_RETIREMENT
+                    )
+                    if postmortem.status != CapacityGovernancePostmortemStatus.PUBLISHED.value:
+                        raise ReflectionCapacityGovernanceConflictError(
+                            "only published knowledge can be retired"
+                        )
+                    now = utc_now()
+                    postmortem.status = CapacityGovernancePostmortemStatus.RETIRED.value
+                    postmortem.retired_at = now
+                    postmortem.retired_by = authorized.subject
+                    postmortem.retired_principal_id = authorized.principal_id
+                    postmortem.retired_token_id = authorized.token_id
+                    postmortem.version += 1
+                    postmortem.updated_at = now
+                    row.status = CapacityGovernanceKnowledgeRecertificationStatus.RETIRED.value
+                else:
+                    row.status = CapacityGovernanceKnowledgeRecertificationStatus.REJECTED.value
+                now = utc_now()
+                row.reviewed_by = authorized.subject
+                row.reviewed_principal_id = authorized.principal_id
+                row.reviewed_token_id = authorized.token_id
+                row.reviewed_at = now
+                row.version += 1
+                row.updated_at = now
+                self._append_audit(
+                    session,
+                    authorized=authorized,
+                    action="capacity.knowledge_recertification.review",
+                    outcome=CapacityGovernanceAuditOutcome.SUCCESS,
+                    incident_id=postmortem.incident_id,
+                    postmortem_id=postmortem.id,
+                    metadata={
+                        "knowledge_recertification_status": row.status,
+                        "postmortem_status": postmortem.status,
+                    },
+                )
+            return _knowledge_recertification_record(row)
+        except Exception as exc:
+            await self._audit_failure(
+                actor=actor, action="capacity.knowledge_recertification.review", exc=exc
+            )
+            raise
+
+    async def retire_knowledge(
+        self, *, recertification_id: UUID, expected_version: int, actor: AuthenticatedPrincipal
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord:
+        return await self.review_knowledge_recertification(
+            recertification_id=recertification_id, expected_version=expected_version, actor=actor
+        )
+
+    async def approve_knowledge_recertification(
+        self,
+        *,
+        recertification_id: UUID,
+        expected_version: int,
+        actor: AuthenticatedPrincipal,
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord:
+        return await self.review_knowledge_recertification(
+            recertification_id=recertification_id,
+            expected_version=expected_version,
+            actor=actor,
+        )
+
+    async def reject_knowledge_recertification(
+        self,
+        *,
+        recertification_id: UUID,
+        expected_version: int,
+        actor: AuthenticatedPrincipal,
+    ) -> CapacityGovernanceKnowledgeRecertificationRecord:
+        return await self.review_knowledge_recertification(
+            recertification_id=recertification_id,
+            expected_version=expected_version,
+            actor=actor,
+        )
+
     async def list_knowledge_recoveries(
         self,
         query: CapacityGovernanceKnowledgeRecoveryQuery,
@@ -2441,8 +2750,7 @@ class PostgresReflectionCapacityControl:
             filters = self._knowledge_recovery_scope(scope.tenant_id)
             if query.status is not None:
                 filters.append(
-                    ReflectionCapacityGovernanceKnowledgeRecoveryModel.status
-                    == query.status.value
+                    ReflectionCapacityGovernanceKnowledgeRecoveryModel.status == query.status.value
                 )
             if query.postmortem_id is not None:
                 filters.append(
@@ -2453,8 +2761,7 @@ class PostgresReflectionCapacityControl:
                 updated_at, item_id = after
                 filters.append(
                     or_(
-                        ReflectionCapacityGovernanceKnowledgeRecoveryModel.updated_at
-                        < updated_at,
+                        ReflectionCapacityGovernanceKnowledgeRecoveryModel.updated_at < updated_at,
                         and_(
                             ReflectionCapacityGovernanceKnowledgeRecoveryModel.updated_at
                             == updated_at,
@@ -2508,9 +2815,7 @@ class PostgresReflectionCapacityControl:
                     permission=CAPACITY_KNOWLEDGE_RECOVERY_REQUEST,
                     for_update=True,
                 )
-                await session.execute(
-                    select(func.pg_advisory_xact_lock(self._incident_lock_id()))
-                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
                 postmortem = await session.scalar(
                     select(ReflectionCapacityGovernancePostmortemModel)
                     .where(
@@ -2642,14 +2947,11 @@ class PostgresReflectionCapacityControl:
                     permission=CAPACITY_KNOWLEDGE_RECOVERY_REVIEW,
                     for_update=True,
                 )
-                await session.execute(
-                    select(func.pg_advisory_xact_lock(self._incident_lock_id()))
-                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
                 row = await session.scalar(
                     select(ReflectionCapacityGovernanceKnowledgeRecoveryModel)
                     .where(
-                        ReflectionCapacityGovernanceKnowledgeRecoveryModel.id
-                        == recovery_id,
+                        ReflectionCapacityGovernanceKnowledgeRecoveryModel.id == recovery_id,
                         *self._knowledge_recovery_scope(authorized.tenant_id),
                     )
                     .with_for_update()
@@ -2658,8 +2960,7 @@ class PostgresReflectionCapacityControl:
                     raise KeyError("Unknown capacity governance knowledge recovery")
                 if (
                     row.version != expected_version
-                    or row.status
-                    != CapacityGovernanceKnowledgeRecoveryStatus.AWAITING_REVIEW.value
+                    or row.status != CapacityGovernanceKnowledgeRecoveryStatus.AWAITING_REVIEW.value
                 ):
                     raise ReflectionCapacityGovernanceConflictError(
                         "Knowledge recovery changed before review"
@@ -2671,8 +2972,7 @@ class PostgresReflectionCapacityControl:
                 postmortem = await session.scalar(
                     select(ReflectionCapacityGovernancePostmortemModel)
                     .where(
-                        ReflectionCapacityGovernancePostmortemModel.id
-                        == row.postmortem_id,
+                        ReflectionCapacityGovernancePostmortemModel.id == row.postmortem_id,
                         *self._postmortem_scope(authorized.tenant_id),
                     )
                     .with_for_update()
@@ -2787,16 +3087,13 @@ class PostgresReflectionCapacityControl:
             or snapshot.postmortem_version != postmortem.version
             or snapshot.knowledge_version != postmortem.knowledge_version
             or snapshot.content_fingerprint != postmortem.content_fingerprint
-            or snapshot.assessment
-            != CapacityGovernanceKnowledgeQualityAssessment.UNSAFE.value
+            or snapshot.assessment != CapacityGovernanceKnowledgeQualityAssessment.UNSAFE.value
             or feedback is None
             or feedback.postmortem_id != postmortem.id
             or feedback.knowledge_version != postmortem.knowledge_version
             or feedback.content_fingerprint != postmortem.content_fingerprint
-            or feedback.status
-            != CapacityGovernanceKnowledgeFeedbackStatus.CONFIRMED.value
-            or feedback.signal
-            != CapacityGovernanceKnowledgeFeedbackSignal.SAFETY_CONCERN.value
+            or feedback.status != CapacityGovernanceKnowledgeFeedbackStatus.CONFIRMED.value
+            or feedback.signal != CapacityGovernanceKnowledgeFeedbackSignal.SAFETY_CONCERN.value
         ):
             raise ReflectionCapacityGovernanceConflictError(
                 "Knowledge recovery source evidence is stale or incomplete"
@@ -2856,12 +3153,10 @@ class PostgresReflectionCapacityControl:
             for row in rows
         )
         dismissed = sum(
-            row.status == CapacityGovernanceKnowledgeFeedbackStatus.DISMISSED.value
-            for row in rows
+            row.status == CapacityGovernanceKnowledgeFeedbackStatus.DISMISSED.value for row in rows
         )
         superseded = sum(
-            row.status == CapacityGovernanceKnowledgeFeedbackStatus.SUPERSEDED.value
-            for row in rows
+            row.status == CapacityGovernanceKnowledgeFeedbackStatus.SUPERSEDED.value for row in rows
         )
         fingerprint = hashlib.sha256(
             json.dumps(
@@ -2911,9 +3206,7 @@ class PostgresReflectionCapacityControl:
             row.version != expected_version
             or row.status != CapacityGovernancePostmortemStatus.AWAITING_REVIEW.value
         ):
-            raise ReflectionCapacityGovernanceConflictError(
-                "Postmortem changed before review"
-            )
+            raise ReflectionCapacityGovernanceConflictError("Postmortem changed before review")
         if row.requested_principal_id == authorized.principal_id:
             raise CapacityGovernanceAuthorizationError(
                 "Postmortem requester cannot review the same postmortem"
@@ -2966,18 +3259,14 @@ class PostgresReflectionCapacityControl:
                     tenant_id = authorized.tenant_id
                 else:
                     resolved_tenant_id = await session.scalar(
-                        select(TenantModel.id).where(
-                            TenantModel.slug == self.governance_tenant
-                        )
+                        select(TenantModel.id).where(TenantModel.slug == self.governance_tenant)
                     )
                     if resolved_tenant_id is None:
                         raise CapacityGovernanceAuthorizationError(
                             "Unknown capacity governance tenant"
                         )
                     tenant_id = resolved_tenant_id
-                await session.execute(
-                    select(func.pg_advisory_xact_lock(self._incident_lock_id()))
-                )
+                await session.execute(select(func.pg_advisory_xact_lock(self._incident_lock_id())))
                 bucket_seconds = thresholds.audit_window_seconds
                 bucket_epoch = int(now.timestamp())
                 bucket_start = datetime.fromtimestamp(
@@ -2988,8 +3277,7 @@ class PostgresReflectionCapacityControl:
                     await session.scalars(
                         select(ReflectionCapacityGovernanceAuditEventModel.outcome)
                         .where(
-                            ReflectionCapacityGovernanceAuditEventModel.tenant_id
-                            == tenant_id,
+                            ReflectionCapacityGovernanceAuditEventModel.tenant_id == tenant_id,
                             ReflectionCapacityGovernanceAuditEventModel.handler_version
                             == self.handler_version,
                             ReflectionCapacityGovernanceAuditEventModel.outcome.in_(
@@ -2998,10 +3286,8 @@ class PostgresReflectionCapacityControl:
                                     CapacityGovernanceAuditOutcome.CONFLICT.value,
                                 )
                             ),
-                            ReflectionCapacityGovernanceAuditEventModel.created_at
-                            >= bucket_start,
-                            ReflectionCapacityGovernanceAuditEventModel.created_at
-                            <= now,
+                            ReflectionCapacityGovernanceAuditEventModel.created_at >= bucket_start,
+                            ReflectionCapacityGovernanceAuditEventModel.created_at <= now,
                         )
                         .order_by(
                             ReflectionCapacityGovernanceAuditEventModel.created_at.desc(),
@@ -3031,9 +3317,7 @@ class PostgresReflectionCapacityControl:
                 )
                 quality_snapshot_rows = tuple(
                     await session.scalars(
-                        select(
-                            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel
-                        )
+                        select(ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel)
                         .where(
                             *self._knowledge_quality_scope(tenant_id),
                             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.captured_at
@@ -3074,12 +3358,8 @@ class PostgresReflectionCapacityControl:
                         .limit(quality_thresholds.maximum_snapshots + 1)
                     )
                 )
-                postmortems_truncated = (
-                    len(postmortem_rows) > quality_thresholds.maximum_snapshots
-                )
-                postmortem_rows = postmortem_rows[
-                    : quality_thresholds.maximum_snapshots
-                ]
+                postmortems_truncated = len(postmortem_rows) > quality_thresholds.maximum_snapshots
+                postmortem_rows = postmortem_rows[: quality_thresholds.maximum_snapshots]
                 drill_report = await self._incident_drill_report(
                     session,
                     checked_at=now,
@@ -3090,12 +3370,8 @@ class PostgresReflectionCapacityControl:
                     tenant_id=tenant_id,
                     handler_version=self.handler_version,
                     bucket_start=bucket_start,
-                    denied_count=audit_counts[
-                        CapacityGovernanceAuditOutcome.DENIED.value
-                    ],
-                    conflict_count=audit_counts[
-                        CapacityGovernanceAuditOutcome.CONFLICT.value
-                    ],
+                    denied_count=audit_counts[CapacityGovernanceAuditOutcome.DENIED.value],
+                    conflict_count=audit_counts[CapacityGovernanceAuditOutcome.CONFLICT.value],
                     thresholds=thresholds,
                 )
                 if audit_candidate is not None:
@@ -3141,33 +3417,27 @@ class PostgresReflectionCapacityControl:
                 ] = {}
                 for snapshot_row in quality_snapshot_rows:
                     snapshot = _knowledge_quality_snapshot_record(snapshot_row)
-                    quality_by_postmortem.setdefault(snapshot.postmortem_id, []).append(
-                        snapshot
-                    )
+                    quality_by_postmortem.setdefault(snapshot.postmortem_id, []).append(snapshot)
                 if not quality_snapshots_truncated:
                     for postmortem_id, snapshots in quality_by_postmortem.items():
                         bounded_snapshots = tuple(snapshots)
-                        unsafe_candidate = (
-                            build_persistent_unsafe_knowledge_incident_candidate(
-                                tenant_id=tenant_id,
-                                handler_version=self.handler_version,
-                                postmortem_id=postmortem_id,
-                                snapshots=bounded_snapshots,
-                                now=now,
-                                thresholds=quality_thresholds,
-                            )
+                        unsafe_candidate = build_persistent_unsafe_knowledge_incident_candidate(
+                            tenant_id=tenant_id,
+                            handler_version=self.handler_version,
+                            postmortem_id=postmortem_id,
+                            snapshots=bounded_snapshots,
+                            now=now,
+                            thresholds=quality_thresholds,
                         )
                         if unsafe_candidate is not None:
                             candidates.append(unsafe_candidate)
-                        degraded_candidate = (
-                            build_repeated_degraded_knowledge_incident_candidate(
-                                tenant_id=tenant_id,
-                                handler_version=self.handler_version,
-                                postmortem_id=postmortem_id,
-                                snapshots=bounded_snapshots,
-                                now=now,
-                                thresholds=quality_thresholds,
-                            )
+                        degraded_candidate = build_repeated_degraded_knowledge_incident_candidate(
+                            tenant_id=tenant_id,
+                            handler_version=self.handler_version,
+                            postmortem_id=postmortem_id,
+                            snapshots=bounded_snapshots,
+                            now=now,
+                            thresholds=quality_thresholds,
                         )
                         if degraded_candidate is not None:
                             candidates.append(degraded_candidate)
@@ -3205,13 +3475,9 @@ class PostgresReflectionCapacityControl:
                         .with_for_update()
                     )
                 )
-                incidents_truncated = (
-                    len(existing_rows) > thresholds.maximum_incidents
-                )
+                incidents_truncated = len(existing_rows) > thresholds.maximum_incidents
                 existing_rows = existing_rows[: thresholds.maximum_incidents]
-                existing_by_fingerprint = {
-                    row.fingerprint: row for row in existing_rows
-                }
+                existing_by_fingerprint = {row.fingerprint: row for row in existing_rows}
                 matched_fingerprints = {candidate.fingerprint for candidate in candidates}
                 opened = 0
                 updated = 0
@@ -3288,8 +3554,8 @@ class PostgresReflectionCapacityControl:
                         stored_bucket = row.evidence.get("bucket_start")
                         if isinstance(stored_bucket, str):
                             try:
-                                has_new_recovery_fact = (
-                                    bucket_start > datetime.fromisoformat(stored_bucket)
+                                has_new_recovery_fact = bucket_start > datetime.fromisoformat(
+                                    stored_bucket
                                 )
                             except ValueError:
                                 has_new_recovery_fact = False
@@ -3298,13 +3564,10 @@ class PostgresReflectionCapacityControl:
                         CapacityGovernanceIncidentSignal.ALERT_REOPEN_REPEAT,
                     }:
                         source = (
-                            alerts_by_id.get(row.source_id)
-                            if row.source_id is not None
-                            else None
+                            alerts_by_id.get(row.source_id) if row.source_id is not None else None
                         )
                         has_new_recovery_fact = (
-                            source is not None
-                            and source.updated_at > row.last_evidence_at
+                            source is not None and source.updated_at > row.last_evidence_at
                         )
                     elif signal is CapacityGovernanceIncidentSignal.DRILL_CHECK_FAILED:
                         check_name = row.evidence.get("check_name")
@@ -3319,9 +3582,7 @@ class PostgresReflectionCapacityControl:
                     }:
                         stored_postmortem_id = row.evidence.get("postmortem_id")
                         try:
-                            risk_postmortem_id: UUID | None = UUID(
-                                str(stored_postmortem_id)
-                            )
+                            risk_postmortem_id: UUID | None = UUID(str(stored_postmortem_id))
                         except (TypeError, ValueError):
                             risk_postmortem_id = None
                         latest_quality = (
@@ -3334,10 +3595,7 @@ class PostgresReflectionCapacityControl:
                             and latest_quality is not None
                             and latest_quality.captured_at > row.last_evidence_at
                         )
-                    elif (
-                        signal
-                        is CapacityGovernanceIncidentSignal.KNOWLEDGE_REQUARANTINED
-                    ):
+                    elif signal is CapacityGovernanceIncidentSignal.KNOWLEDGE_REQUARANTINED:
                         risk_postmortem = (
                             postmortems_by_id.get(row.source_id)
                             if row.source_id is not None
@@ -3485,9 +3743,7 @@ class PostgresReflectionCapacityControl:
                     permission=CAPACITY_ALERTS_MANAGE,
                     for_update=True,
                 )
-            await session.execute(
-                select(func.pg_advisory_xact_lock(self._drift_lock_id()))
-            )
+            await session.execute(select(func.pg_advisory_xact_lock(self._drift_lock_id())))
             active = await session.scalar(self._active_policy_statement())
             expected_thresholds = (
                 ReflectionCapacityThresholds.model_validate(active.thresholds)
@@ -3503,8 +3759,7 @@ class PostgresReflectionCapacityControl:
                             ReflectionCapacityObservationModel.thresholds,
                         )
                         .where(
-                            ReflectionCapacityObservationModel.job_type
-                            == REFLECTION_JOB_TYPE,
+                            ReflectionCapacityObservationModel.job_type == REFLECTION_JOB_TYPE,
                             ReflectionCapacityObservationModel.handler_version
                             == self.handler_version,
                             ReflectionCapacityObservationModel.observed_at
@@ -3832,9 +4087,7 @@ class PostgresReflectionCapacityControl:
             CAPACITY_KNOWLEDGE_RECOVERY_REVIEW,
         }
         assignment_counts = {
-            permission: sum(
-                permission in role.permissions for role in CAPACITY_GOVERNANCE_ROLES
-            )
+            permission: sum(permission in role.permissions for role in CAPACITY_GOVERNANCE_ROLES)
             for permission in privileged_permissions
         }
         role_separation = all(count == 1 for count in assignment_counts.values())
@@ -3946,9 +4199,7 @@ class PostgresReflectionCapacityControl:
             ),
             CapacityGovernanceDrillCheck(
                 name="incident_lifecycle_constraints",
-                passed=(
-                    incident_lifecycle_constraints <= incident_constraint_names
-                ),
+                passed=(incident_lifecycle_constraints <= incident_constraint_names),
                 detail="Incident lifecycle and fingerprint CHECK constraints are present.",
             ),
             CapacityGovernanceDrillCheck(
@@ -3958,13 +4209,9 @@ class PostgresReflectionCapacityControl:
             ),
             CapacityGovernanceDrillCheck(
                 name="remediation_lifecycle_constraints",
-                passed=(
-                    remediation_lifecycle_constraints
-                    <= remediation_constraint_names
-                ),
+                passed=(remediation_lifecycle_constraints <= remediation_constraint_names),
                 detail=(
-                    "Remediation lifecycle and one-plan-per-incident-cycle "
-                    "constraints are present."
+                    "Remediation lifecycle and one-plan-per-incident-cycle constraints are present."
                 ),
             ),
             CapacityGovernanceDrillCheck(
@@ -3974,10 +4221,7 @@ class PostgresReflectionCapacityControl:
             ),
             CapacityGovernanceDrillCheck(
                 name="postmortem_lifecycle_constraints",
-                passed=(
-                    postmortem_lifecycle_constraints
-                    <= postmortem_constraint_names
-                ),
+                passed=(postmortem_lifecycle_constraints <= postmortem_constraint_names),
                 detail=(
                     "Postmortem lifecycle, source uniqueness and fingerprint "
                     "constraints are present."
@@ -3986,16 +4230,12 @@ class PostgresReflectionCapacityControl:
             CapacityGovernanceDrillCheck(
                 name="postmortem_query_indexes",
                 passed=expected_postmortem_indexes <= postmortem_index_names,
-                detail=(
-                    "Bounded postmortem and hybrid governance knowledge indexes "
-                    "are present."
-                ),
+                detail=("Bounded postmortem and hybrid governance knowledge indexes are present."),
             ),
             CapacityGovernanceDrillCheck(
                 name="knowledge_feedback_lifecycle_constraints",
                 passed=(
-                    knowledge_feedback_lifecycle_constraints
-                    <= knowledge_feedback_constraint_names
+                    knowledge_feedback_lifecycle_constraints <= knowledge_feedback_constraint_names
                 ),
                 detail=(
                     "Feedback classifications, review lifecycle and reporter-version "
@@ -4004,10 +4244,7 @@ class PostgresReflectionCapacityControl:
             ),
             CapacityGovernanceDrillCheck(
                 name="knowledge_feedback_query_indexes",
-                passed=(
-                    expected_knowledge_feedback_indexes
-                    <= knowledge_feedback_index_names
-                ),
+                passed=(expected_knowledge_feedback_indexes <= knowledge_feedback_index_names),
                 detail=(
                     "Feedback reporter-version uniqueness plus bounded status and "
                     "postmortem query indexes are present."
@@ -4017,8 +4254,7 @@ class PostgresReflectionCapacityControl:
                 name="knowledge_quality_snapshot_controls",
                 passed=(
                     quality_trigger_present
-                    and knowledge_quality_constraints
-                    <= knowledge_quality_constraint_names
+                    and knowledge_quality_constraints <= knowledge_quality_constraint_names
                 ),
                 detail=(
                     "Quality snapshot classification, count, evidence uniqueness and "
@@ -4027,10 +4263,7 @@ class PostgresReflectionCapacityControl:
             ),
             CapacityGovernanceDrillCheck(
                 name="knowledge_quality_query_indexes",
-                passed=(
-                    expected_knowledge_quality_indexes
-                    <= knowledge_quality_index_names
-                ),
+                passed=(expected_knowledge_quality_indexes <= knowledge_quality_index_names),
                 detail=(
                     "Quality evidence uniqueness plus bounded assessment, captured-time "
                     "trend and postmortem indexes are present."
@@ -4038,23 +4271,14 @@ class PostgresReflectionCapacityControl:
             ),
             CapacityGovernanceDrillCheck(
                 name="knowledge_recovery_lifecycle_constraints",
-                passed=(
-                    knowledge_recovery_constraints
-                    <= knowledge_recovery_constraint_names
-                ),
-                detail=(
-                    "Recovery reason, lifecycle and version constraints are present."
-                ),
+                passed=(knowledge_recovery_constraints <= knowledge_recovery_constraint_names),
+                detail=("Recovery reason, lifecycle and version constraints are present."),
             ),
             CapacityGovernanceDrillCheck(
                 name="knowledge_recovery_query_indexes",
-                passed=(
-                    expected_knowledge_recovery_indexes
-                    <= knowledge_recovery_index_names
-                ),
+                passed=(expected_knowledge_recovery_indexes <= knowledge_recovery_index_names),
                 detail=(
-                    "Single active recovery plus bounded status and postmortem "
-                    "indexes are present."
+                    "Single active recovery plus bounded status and postmortem indexes are present."
                 ),
             ),
         )
@@ -4150,8 +4374,7 @@ class PostgresReflectionCapacityControl:
                     safe_incident_id = await session.scalar(
                         select(ReflectionCapacityGovernanceIncidentModel.id).where(
                             ReflectionCapacityGovernanceIncidentModel.id == incident_id,
-                            ReflectionCapacityGovernanceIncidentModel.tenant_id
-                            == tenant_id,
+                            ReflectionCapacityGovernanceIncidentModel.tenant_id == tenant_id,
                             ReflectionCapacityGovernanceIncidentModel.handler_version
                             == self.handler_version,
                         )
@@ -4160,10 +4383,8 @@ class PostgresReflectionCapacityControl:
                 if postmortem_id is not None:
                     safe_postmortem_id = await session.scalar(
                         select(ReflectionCapacityGovernancePostmortemModel.id).where(
-                            ReflectionCapacityGovernancePostmortemModel.id
-                            == postmortem_id,
-                            ReflectionCapacityGovernancePostmortemModel.tenant_id
-                            == tenant_id,
+                            ReflectionCapacityGovernancePostmortemModel.id == postmortem_id,
+                            ReflectionCapacityGovernancePostmortemModel.tenant_id == tenant_id,
                             ReflectionCapacityGovernancePostmortemModel.handler_version
                             == self.handler_version,
                         )
@@ -4258,39 +4479,34 @@ class PostgresReflectionCapacityControl:
         return [
             ReflectionCapacityGovernanceIncidentModel.tenant_id == tenant_id,
             ReflectionCapacityGovernanceIncidentModel.job_type == REFLECTION_JOB_TYPE,
-            ReflectionCapacityGovernanceIncidentModel.handler_version
-            == self.handler_version,
+            ReflectionCapacityGovernanceIncidentModel.handler_version == self.handler_version,
         ]
 
     def _remediation_scope(self, tenant_id: UUID) -> list[ColumnElement[bool]]:
         return [
             ReflectionCapacityGovernanceRemediationModel.tenant_id == tenant_id,
             ReflectionCapacityGovernanceRemediationModel.job_type == REFLECTION_JOB_TYPE,
-            ReflectionCapacityGovernanceRemediationModel.handler_version
-            == self.handler_version,
+            ReflectionCapacityGovernanceRemediationModel.handler_version == self.handler_version,
         ]
 
     def _postmortem_scope(self, tenant_id: UUID) -> list[ColumnElement[bool]]:
         return [
             ReflectionCapacityGovernancePostmortemModel.tenant_id == tenant_id,
             ReflectionCapacityGovernancePostmortemModel.job_type == REFLECTION_JOB_TYPE,
-            ReflectionCapacityGovernancePostmortemModel.handler_version
-            == self.handler_version,
+            ReflectionCapacityGovernancePostmortemModel.handler_version == self.handler_version,
         ]
 
     def _knowledge_feedback_scope(self, tenant_id: UUID) -> list[ColumnElement[bool]]:
         return [
             ReflectionCapacityGovernanceKnowledgeFeedbackModel.tenant_id == tenant_id,
-            ReflectionCapacityGovernanceKnowledgeFeedbackModel.job_type
-            == REFLECTION_JOB_TYPE,
+            ReflectionCapacityGovernanceKnowledgeFeedbackModel.job_type == REFLECTION_JOB_TYPE,
             ReflectionCapacityGovernanceKnowledgeFeedbackModel.handler_version
             == self.handler_version,
         ]
 
     def _knowledge_quality_scope(self, tenant_id: UUID) -> list[ColumnElement[bool]]:
         return [
-            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.tenant_id
-            == tenant_id,
+            ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.tenant_id == tenant_id,
             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.job_type
             == REFLECTION_JOB_TYPE,
             ReflectionCapacityGovernanceKnowledgeQualitySnapshotModel.handler_version
@@ -4300,9 +4516,17 @@ class PostgresReflectionCapacityControl:
     def _knowledge_recovery_scope(self, tenant_id: UUID) -> list[ColumnElement[bool]]:
         return [
             ReflectionCapacityGovernanceKnowledgeRecoveryModel.tenant_id == tenant_id,
-            ReflectionCapacityGovernanceKnowledgeRecoveryModel.job_type
-            == REFLECTION_JOB_TYPE,
+            ReflectionCapacityGovernanceKnowledgeRecoveryModel.job_type == REFLECTION_JOB_TYPE,
             ReflectionCapacityGovernanceKnowledgeRecoveryModel.handler_version
+            == self.handler_version,
+        ]
+
+    def _knowledge_recertification_scope(self, tenant_id: UUID) -> list[ColumnElement[bool]]:
+        return [
+            ReflectionCapacityGovernanceKnowledgeRecertificationModel.tenant_id == tenant_id,
+            ReflectionCapacityGovernanceKnowledgeRecertificationModel.job_type
+            == REFLECTION_JOB_TYPE,
+            ReflectionCapacityGovernanceKnowledgeRecertificationModel.handler_version
             == self.handler_version,
         ]
 
@@ -4329,8 +4553,7 @@ class PostgresReflectionCapacityControl:
     def _incident_lock_id(self) -> int:
         digest = hashlib.sha256(
             (
-                "reflection-capacity-incident|"
-                f"{self.governance_tenant}|{self.handler_version}"
+                f"reflection-capacity-incident|{self.governance_tenant}|{self.handler_version}"
             ).encode()
         ).digest()
         return int.from_bytes(digest[:8], byteorder="big", signed=True)
@@ -4491,6 +4714,9 @@ def _postmortem_record(
         quarantine_feedback_id=row.quarantine_feedback_id,
         restore_count=row.restore_count,
         last_restored_at=row.last_restored_at,
+        last_certified_at=row.last_certified_at,
+        retired_at=row.retired_at,
+        retired_by=row.retired_by,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -4569,6 +4795,31 @@ def _knowledge_recovery_record(
     )
 
 
+def _knowledge_recertification_record(
+    row: ReflectionCapacityGovernanceKnowledgeRecertificationModel,
+) -> CapacityGovernanceKnowledgeRecertificationRecord:
+    return CapacityGovernanceKnowledgeRecertificationRecord(
+        id=row.id,
+        postmortem_id=row.postmortem_id,
+        quality_snapshot_id=row.quality_snapshot_id,
+        handler_version=row.handler_version,
+        postmortem_version=row.postmortem_version,
+        knowledge_version=row.knowledge_version,
+        content_fingerprint=row.content_fingerprint,
+        quality_evidence_fingerprint=row.quality_evidence_fingerprint,
+        decision=CapacityGovernanceKnowledgeRecertificationDecision(row.decision),
+        reason=CapacityGovernanceKnowledgeRecertificationReason(row.reason),
+        status=CapacityGovernanceKnowledgeRecertificationStatus(row.status),
+        version=row.version,
+        requested_by=row.requested_by,
+        requested_at=row.requested_at,
+        reviewed_by=row.reviewed_by,
+        reviewed_at=row.reviewed_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 def _restored_knowledge_version(
     postmortem: ReflectionCapacityGovernancePostmortemModel,
 ) -> str:
@@ -4638,9 +4889,7 @@ def _audit_cursor_filters(
         "occurred_from": (
             query.occurred_from.isoformat() if query.occurred_from is not None else None
         ),
-        "occurred_to": (
-            query.occurred_to.isoformat() if query.occurred_to is not None else None
-        ),
+        "occurred_to": (query.occurred_to.isoformat() if query.occurred_to is not None else None),
         "outcome": query.outcome.value if query.outcome is not None else None,
     }
 
@@ -4669,9 +4918,7 @@ def _postmortem_cursor_filters(
 ) -> dict[str, str | None]:
     return {
         "incident_id": str(query.incident_id) if query.incident_id is not None else None,
-        "remediation_id": (
-            str(query.remediation_id) if query.remediation_id is not None else None
-        ),
+        "remediation_id": (str(query.remediation_id) if query.remediation_id is not None else None),
         "status": query.status.value if query.status is not None else None,
     }
 
@@ -4680,9 +4927,7 @@ def _knowledge_feedback_cursor_filters(
     query: CapacityGovernanceKnowledgeFeedbackQuery,
 ) -> dict[str, str | None]:
     return {
-        "postmortem_id": (
-            str(query.postmortem_id) if query.postmortem_id is not None else None
-        ),
+        "postmortem_id": (str(query.postmortem_id) if query.postmortem_id is not None else None),
         "signal": query.signal.value if query.signal is not None else None,
         "status": query.status.value if query.status is not None else None,
     }
@@ -4693,9 +4938,7 @@ def _knowledge_quality_cursor_filters(
 ) -> dict[str, str | None]:
     return {
         "assessment": query.assessment.value if query.assessment is not None else None,
-        "postmortem_id": (
-            str(query.postmortem_id) if query.postmortem_id is not None else None
-        ),
+        "postmortem_id": (str(query.postmortem_id) if query.postmortem_id is not None else None),
     }
 
 
@@ -4714,9 +4957,7 @@ def _knowledge_quality_trend_bucket_starts(
     query: CapacityGovernanceKnowledgeQualityTrendQuery,
 ) -> tuple[datetime, ...]:
     bucket_seconds = (
-        3_600
-        if query.bucket is CapacityGovernanceKnowledgeQualityTrendBucket.HOUR
-        else 86_400
+        3_600 if query.bucket is CapacityGovernanceKnowledgeQualityTrendBucket.HOUR else 86_400
     )
     start_epoch = int(query.captured_from.timestamp())
     bucket = datetime.fromtimestamp(
@@ -4734,9 +4975,7 @@ def _knowledge_recovery_cursor_filters(
     query: CapacityGovernanceKnowledgeRecoveryQuery,
 ) -> dict[str, str | None]:
     return {
-        "postmortem_id": (
-            str(query.postmortem_id) if query.postmortem_id is not None else None
-        ),
+        "postmortem_id": (str(query.postmortem_id) if query.postmortem_id is not None else None),
         "status": query.status.value if query.status is not None else None,
     }
 
